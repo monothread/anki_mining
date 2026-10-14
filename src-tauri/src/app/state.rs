@@ -1,0 +1,636 @@
+use std::fs::File;
+use std::io::BufReader;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+
+use serde::Serialize;
+use thiserror::Error;
+
+use crate::anki::{default_mining_model, AnkiClient, AnkiError};
+use crate::capture::Region;
+use crate::cards::{build_note, CardInput};
+use crate::config::{Config, DEFAULT_MODEL_NAME};
+use crate::dictionary::{Dictionary, DictionaryError, ImportStats, ScanResult};
+use crate::sources::ocr::RegionHandle;
+use crate::text_offsets::utf16_offset_to_byte;
+
+/// Smaller areas cannot hold a readable line of text.
+pub const MIN_REGION_WIDTH: u32 = 32;
+pub const MIN_REGION_HEIGHT: u32 = 12;
+
+#[derive(Debug, Error)]
+pub enum AppError {
+    #[error(transparent)]
+    Dictionary(#[from] DictionaryError),
+    #[error(transparent)]
+    Anki(#[from] AnkiError),
+    #[error("position {0} is outside the sentence")]
+    InvalidPosition(usize),
+    #[error("profile `{0}` does not exist")]
+    UnknownProfile(String),
+    #[error("text recognition is not available: {0}")]
+    OcrUnavailable(String),
+    #[error("the selected area is too small ({width}x{height}); it must be at least {MIN_REGION_WIDTH}x{MIN_REGION_HEIGHT} pixels")]
+    RegionTooSmall { width: u32, height: u32 },
+    #[error("cannot read `{path}`: {reason}")]
+    Io { path: String, reason: String },
+    #[error("internal state is unavailable (a thread panicked)")]
+    Poisoned,
+}
+
+/// What the overlay needs to know when it starts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Status {
+    pub dictionary_entries: usize,
+    pub warnings: Vec<String>,
+    pub mining_hotkey: String,
+    pub websocket_port: Option<u16>,
+    pub default_profile_id: String,
+    /// False when the OCR models or the screen could not be loaded.
+    pub ocr_available: bool,
+    /// Screen area that is being read with OCR, if any.
+    pub ocr_region: Option<Region>,
+}
+
+/// Facts about startup that are fixed for the lifetime of the app.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Startup {
+    pub warnings: Vec<String>,
+    pub websocket_port: Option<u16>,
+    /// Why OCR is unavailable; `None` when it is running.
+    pub ocr_unavailable: Option<String>,
+}
+
+pub struct AppState {
+    config: Config,
+    dictionary: Mutex<Dictionary>,
+    anki: AnkiClient,
+    startup: Startup,
+    ocr_region: RegionHandle,
+    model_ready: AtomicBool,
+}
+
+impl AppState {
+    pub fn new(
+        config: Config,
+        dictionary: Dictionary,
+        startup: Startup,
+        ocr_region: RegionHandle,
+    ) -> AppState {
+        let anki = AnkiClient::new(&config.anki_connect_url);
+        AppState {
+            config,
+            dictionary: Mutex::new(dictionary),
+            anki,
+            startup,
+            ocr_region,
+            model_ready: AtomicBool::new(false),
+        }
+    }
+
+    pub fn status(&self) -> Result<Status, AppError> {
+        Ok(Status {
+            dictionary_entries: self.lock_dictionary()?.entry_count()?,
+            warnings: self.startup.warnings.clone(),
+            mining_hotkey: self.config.mining_hotkey.clone(),
+            websocket_port: self.startup.websocket_port,
+            default_profile_id: self.config.default_profile_id.clone(),
+            ocr_available: self.startup.ocr_unavailable.is_none(),
+            ocr_region: self.ocr_region.get(),
+        })
+    }
+
+    /// Starts (or moves) screen reading on `region`, or stops it with `None`.
+    pub fn set_ocr_region(&self, region: Option<Region>) -> Result<Option<Region>, AppError> {
+        if let Some(reason) = &self.startup.ocr_unavailable {
+            return Err(AppError::OcrUnavailable(reason.clone()));
+        }
+        if let Some(area) = region {
+            if area.width < MIN_REGION_WIDTH || area.height < MIN_REGION_HEIGHT {
+                return Err(AppError::RegionTooSmall {
+                    width: area.width,
+                    height: area.height,
+                });
+            }
+        }
+        self.ocr_region.set(region);
+        Ok(region)
+    }
+
+    /// Dictionary matches for the text of `sentence` starting at UTF-16 offset `start`.
+    pub fn scan_at(&self, sentence: &str, start: usize) -> Result<Vec<ScanResult>, AppError> {
+        let byte_start =
+            utf16_offset_to_byte(sentence, start).ok_or(AppError::InvalidPosition(start))?;
+        Ok(self.lock_dictionary()?.scan(&sentence[byte_start..])?)
+    }
+
+    /// Creates the card in the deck of the chosen profile (the default one when `None`) and
+    /// returns the Anki note id. The default note type is created on first use.
+    pub fn mine(&self, input: &CardInput, profile_id: Option<&str>) -> Result<u64, AppError> {
+        let profile = match profile_id {
+            Some(id) => self.config.profile(id),
+            None => self.config.default_profile(),
+        }
+        .ok_or_else(|| {
+            AppError::UnknownProfile(
+                profile_id
+                    .unwrap_or(&self.config.default_profile_id)
+                    .to_string(),
+            )
+        })?;
+
+        if profile.model_name == DEFAULT_MODEL_NAME && !self.model_ready.load(Ordering::SeqCst) {
+            self.anki.ensure_model(&default_mining_model())?;
+            self.model_ready.store(true, Ordering::SeqCst);
+        }
+        Ok(self.anki.add_note(&build_note(profile, input))?)
+    }
+
+    /// Replaces the dictionary with the contents of a `jmdict-simplified` JSON file.
+    pub fn import_dictionary(&self, path: &Path) -> Result<ImportStats, AppError> {
+        let file = File::open(path).map_err(|error| AppError::Io {
+            path: path.display().to_string(),
+            reason: error.to_string(),
+        })?;
+        Ok(self
+            .lock_dictionary()?
+            .import_jmdict(BufReader::new(file))?)
+    }
+
+    fn lock_dictionary(&self) -> Result<std::sync::MutexGuard<'_, Dictionary>, AppError> {
+        self.dictionary.lock().map_err(|_| AppError::Poisoned)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::anki::test_support::{failure, ok, MockAnki, Reply};
+    use crate::config::{default_profile, Config};
+    use crate::types::entry::Entry;
+    use crate::types::profile::Profile;
+
+    const JMDICT_FIXTURE: &str = r#"{
+        "tags": {},
+        "words": [
+            { "id": "1467640", "kanji": [{ "common": true, "text": "猫", "tags": [] }],
+              "kana": [{ "common": true, "text": "ねこ", "tags": [], "appliesToKanji": ["*"] }],
+              "sense": [{ "partOfSpeech": ["n"], "gloss": [{ "text": "cat" }] }] },
+            { "id": "1358280", "kanji": [{ "common": true, "text": "食べる", "tags": [] }],
+              "kana": [{ "common": true, "text": "たべる", "tags": [], "appliesToKanji": ["*"] }],
+              "sense": [{ "partOfSpeech": ["v1", "vt"], "gloss": [{ "text": "to eat" }] }] }
+        ]
+    }"#;
+
+    fn dictionary() -> Dictionary {
+        let mut dictionary = Dictionary::open_in_memory().expect("open");
+        dictionary
+            .import_jmdict(JMDICT_FIXTURE.as_bytes())
+            .expect("import");
+        dictionary
+    }
+
+    fn state_with(config: Config) -> AppState {
+        AppState::new(
+            config,
+            dictionary(),
+            Startup::default(),
+            RegionHandle::default(),
+        )
+    }
+
+    fn state_for(mock: &MockAnki) -> AppState {
+        state_with(Config {
+            anki_connect_url: mock.url.clone(),
+            ..Config::default()
+        })
+    }
+
+    fn input() -> CardInput {
+        CardInput {
+            entry: Entry {
+                expression: "猫".to_string(),
+                reading: "ねこ".to_string(),
+                meanings: vec!["cat".to_string()],
+                parts_of_speech: vec!["n".to_string()],
+                frequency: None,
+            },
+            sentence: "猫が好き".to_string(),
+            highlight: Some((0, 1)),
+            source: "clipboard".to_string(),
+            audio: None,
+            picture: None,
+        }
+    }
+
+    fn actions(mock: &MockAnki) -> Vec<String> {
+        mock.requests()
+            .iter()
+            .map(|request| request["action"].as_str().unwrap_or_default().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn status_reports_the_dictionary_size_hotkey_and_startup_facts() {
+        let startup = Startup {
+            warnings: vec!["clipboard unavailable".to_string()],
+            websocket_port: Some(6677),
+            ocr_unavailable: None,
+        };
+        let state = AppState::new(
+            Config::default(),
+            dictionary(),
+            startup,
+            RegionHandle::default(),
+        );
+
+        assert_eq!(
+            state.status().expect("status"),
+            Status {
+                dictionary_entries: 2,
+                warnings: vec!["clipboard unavailable".to_string()],
+                mining_hotkey: "Alt+M".to_string(),
+                websocket_port: Some(6677),
+                default_profile_id: "default".to_string(),
+                ocr_available: true,
+                ocr_region: None,
+            }
+        );
+    }
+
+    #[test]
+    fn status_serializes_with_camel_case_keys() {
+        let state = state_with(Config::default());
+
+        let json = serde_json::to_value(state.status().expect("status")).expect("serialize");
+
+        assert_eq!(
+            json,
+            json!({
+                "dictionaryEntries": 2,
+                "warnings": [],
+                "miningHotkey": "Alt+M",
+                "websocketPort": null,
+                "defaultProfileId": "default",
+                "ocrAvailable": true,
+                "ocrRegion": null
+            })
+        );
+    }
+
+    #[test]
+    fn scan_at_scans_from_the_utf16_offset() {
+        let state = state_with(Config::default());
+
+        let results = state.scan_at("私は猫が好き", 2).expect("scan");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].source, "猫");
+        assert_eq!(results[0].length, 1);
+        assert_eq!(
+            results[0].entries[0].entry.meanings,
+            vec!["cat".to_string()]
+        );
+    }
+
+    #[test]
+    fn scan_at_resolves_inflected_words() {
+        let state = state_with(Config::default());
+
+        let results = state.scan_at("昨日食べました", 2).expect("scan");
+
+        assert_eq!(results[0].source, "食べました");
+        assert_eq!(results[0].entries[0].entry.expression, "食べる");
+        assert_eq!(results[0].entries[0].reasons, vec!["past", "polite"]);
+    }
+
+    #[test]
+    fn scan_at_with_an_offset_past_the_end_fails() {
+        let state = state_with(Config::default());
+
+        let error = state.scan_at("猫", 5).expect_err("must fail");
+
+        assert!(matches!(error, AppError::InvalidPosition(5)));
+        assert_eq!(error.to_string(), "position 5 is outside the sentence");
+    }
+
+    #[test]
+    fn scan_at_at_the_end_of_the_sentence_finds_nothing() {
+        let state = state_with(Config::default());
+
+        assert_eq!(state.scan_at("猫", 1).expect("scan"), vec![]);
+    }
+
+    #[test]
+    fn mine_creates_the_default_model_once_and_adds_the_note_to_the_profile_deck() {
+        let mock = MockAnki::start(vec![
+            ok(json!(["Basic"])),
+            ok(json!({})),
+            ok(json!(111)),
+            ok(json!(222)),
+        ]);
+        let state = state_for(&mock);
+
+        assert_eq!(state.mine(&input(), None).expect("first card"), 111);
+        assert_eq!(state.mine(&input(), None).expect("second card"), 222);
+
+        assert_eq!(
+            actions(&mock),
+            vec!["modelNames", "createModel", "addNote", "addNote"]
+        );
+        let note = &mock.requests()[2]["params"]["note"];
+        assert_eq!(note["deckName"], json!("Mining"));
+        assert_eq!(note["modelName"], json!("AnkiMining"));
+        assert_eq!(
+            note["fields"],
+            json!({
+                "Expression": "猫",
+                "Reading": "ねこ",
+                "Meaning": "cat",
+                "Sentence": "<b>猫</b>が好き",
+                "SentenceAudio": "",
+                "Picture": "",
+                "Frequency": "",
+                "Pitch": "",
+                "Source": "clipboard"
+            })
+        );
+        assert_eq!(note["tags"], json!(["anki-mining"]));
+    }
+
+    #[test]
+    fn mine_does_not_create_the_model_when_it_already_exists() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+        let state = state_for(&mock);
+
+        assert_eq!(state.mine(&input(), None).expect("card"), 5);
+
+        assert_eq!(actions(&mock), vec!["modelNames", "addNote"]);
+    }
+
+    #[test]
+    fn mine_uses_the_requested_profile_and_skips_model_creation_for_custom_models() {
+        let games = Profile {
+            id: "games".to_string(),
+            name: "Games".to_string(),
+            deck_name: "Games".to_string(),
+            model_name: "My Model".to_string(),
+            ..default_profile()
+        };
+        let mock = MockAnki::start(vec![ok(json!(9))]);
+        let state = state_with(Config {
+            anki_connect_url: mock.url.clone(),
+            profiles: vec![default_profile(), games],
+            ..Config::default()
+        });
+
+        assert_eq!(state.mine(&input(), Some("games")).expect("card"), 9);
+
+        assert_eq!(actions(&mock), vec!["addNote"]);
+        let note = &mock.requests()[0]["params"]["note"];
+        assert_eq!(note["deckName"], json!("Games"));
+        assert_eq!(note["modelName"], json!("My Model"));
+    }
+
+    #[test]
+    fn mine_rejects_an_unknown_profile_without_calling_anki() {
+        let mock = MockAnki::start(vec![]);
+        let state = state_for(&mock);
+
+        let error = state.mine(&input(), Some("ghost")).expect_err("must fail");
+
+        assert!(matches!(error, AppError::UnknownProfile(ref id) if id == "ghost"));
+        assert_eq!(error.to_string(), "profile `ghost` does not exist");
+        assert_eq!(mock.requests(), Vec::<serde_json::Value>::new());
+    }
+
+    #[test]
+    fn mine_reports_duplicates() {
+        let mock = MockAnki::start(vec![
+            ok(json!(["AnkiMining"])),
+            failure("cannot create note because it is a duplicate"),
+        ]);
+        let state = state_for(&mock);
+
+        let error = state.mine(&input(), None).expect_err("must fail");
+
+        assert!(matches!(error, AppError::Anki(AnkiError::Duplicate)));
+        assert_eq!(error.to_string(), "the note is a duplicate");
+    }
+
+    #[test]
+    fn mine_retries_the_model_check_after_a_failure() {
+        let mock = MockAnki::start(vec![
+            Reply::Status(500),
+            ok(json!(["AnkiMining"])),
+            ok(json!(3)),
+        ]);
+        let state = state_for(&mock);
+
+        assert!(state.mine(&input(), None).is_err());
+        assert_eq!(state.mine(&input(), None).expect("card"), 3);
+
+        assert_eq!(actions(&mock), vec!["modelNames", "modelNames", "addNote"]);
+    }
+
+    #[test]
+    fn import_dictionary_replaces_the_contents_from_a_json_file() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("jmdict.json");
+        std::fs::write(
+            &path,
+            r#"{ "tags": {}, "words": [
+                { "id": "1", "kanji": [{ "common": true, "text": "犬", "tags": [] }],
+                  "kana": [{ "common": true, "text": "いぬ", "tags": [], "appliesToKanji": ["*"] }],
+                  "sense": [{ "partOfSpeech": ["n"], "gloss": [{ "text": "dog" }] }] }
+            ] }"#,
+        )
+        .expect("write");
+        let state = state_with(Config::default());
+
+        let stats = state.import_dictionary(&path).expect("import");
+
+        assert_eq!(
+            stats,
+            ImportStats {
+                entries: 1,
+                terms: 2,
+                skipped: 0
+            }
+        );
+        assert_eq!(state.status().expect("status").dictionary_entries, 1);
+        assert_eq!(state.scan_at("犬", 0).expect("scan").len(), 1);
+    }
+
+    #[test]
+    fn import_dictionary_reports_a_missing_file() {
+        let state = state_with(Config::default());
+
+        let error = state
+            .import_dictionary(Path::new("/definitely/missing/jmdict.json"))
+            .expect_err("must fail");
+
+        assert!(matches!(error, AppError::Io { .. }));
+        assert!(error
+            .to_string()
+            .starts_with("cannot read `/definitely/missing/jmdict.json`"));
+        assert_eq!(state.status().expect("status").dictionary_entries, 2);
+    }
+
+    #[test]
+    fn import_dictionary_reports_invalid_json_and_keeps_the_old_contents() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("broken.json");
+        std::fs::write(&path, "{ not json").expect("write");
+        let state = state_with(Config::default());
+
+        let error = state.import_dictionary(&path).expect_err("must fail");
+
+        assert!(matches!(
+            error,
+            AppError::Dictionary(DictionaryError::InvalidJson(_))
+        ));
+        assert_eq!(state.status().expect("status").dictionary_entries, 2);
+    }
+
+    #[test]
+    fn card_fields_use_the_expected_field_names() {
+        // Guards the contract between the card builder and the default note type.
+        let note = build_note(&default_profile(), &input());
+
+        let expected: BTreeMap<String, String> = default_mining_model()
+            .in_order_fields
+            .into_iter()
+            .map(|name| (name, String::new()))
+            .collect();
+        assert_eq!(
+            note.fields.keys().collect::<Vec<_>>(),
+            expected.keys().collect::<Vec<_>>()
+        );
+    }
+
+    fn region(width: u32, height: u32) -> Region {
+        Region {
+            x: 10,
+            y: 900,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn setting_a_region_starts_reading_and_is_reported_by_the_status() {
+        let handle = RegionHandle::default();
+        let state = AppState::new(
+            Config::default(),
+            dictionary(),
+            Startup::default(),
+            handle.clone(),
+        );
+
+        assert_eq!(
+            state.set_ocr_region(Some(region(1200, 120))).expect("set"),
+            Some(region(1200, 120))
+        );
+
+        assert_eq!(handle.get(), Some(region(1200, 120)));
+        assert_eq!(
+            state.status().expect("status").ocr_region,
+            Some(region(1200, 120))
+        );
+    }
+
+    #[test]
+    fn clearing_the_region_stops_reading() {
+        let handle = RegionHandle::default();
+        let state = AppState::new(
+            Config::default(),
+            dictionary(),
+            Startup::default(),
+            handle.clone(),
+        );
+        state.set_ocr_region(Some(region(1200, 120))).expect("set");
+
+        assert_eq!(state.set_ocr_region(None).expect("clear"), None);
+
+        assert_eq!(handle.get(), None);
+        assert_eq!(state.status().expect("status").ocr_region, None);
+    }
+
+    #[test]
+    fn regions_that_are_too_small_are_rejected_and_keep_the_previous_one() {
+        let handle = RegionHandle::default();
+        let state = AppState::new(
+            Config::default(),
+            dictionary(),
+            Startup::default(),
+            handle.clone(),
+        );
+        state.set_ocr_region(Some(region(1200, 120))).expect("set");
+
+        let narrow = state
+            .set_ocr_region(Some(region(31, 120)))
+            .expect_err("narrow");
+        let short = state
+            .set_ocr_region(Some(region(1200, 11)))
+            .expect_err("short");
+
+        assert!(matches!(
+            narrow,
+            AppError::RegionTooSmall {
+                width: 31,
+                height: 120
+            }
+        ));
+        assert!(matches!(
+            short,
+            AppError::RegionTooSmall {
+                width: 1200,
+                height: 11
+            }
+        ));
+        assert_eq!(
+            narrow.to_string(),
+            "the selected area is too small (31x120); it must be at least 32x12 pixels"
+        );
+        assert_eq!(handle.get(), Some(region(1200, 120)));
+    }
+
+    #[test]
+    fn the_smallest_allowed_region_is_accepted() {
+        let state = state_with(Config::default());
+
+        assert_eq!(
+            state.set_ocr_region(Some(region(32, 12))).expect("set"),
+            Some(region(32, 12))
+        );
+    }
+
+    #[test]
+    fn selecting_a_region_fails_with_the_reason_when_ocr_is_unavailable() {
+        let handle = RegionHandle::default();
+        let startup = Startup {
+            ocr_unavailable: Some("the OCR models are missing".to_string()),
+            ..Startup::default()
+        };
+        let state = AppState::new(Config::default(), dictionary(), startup, handle.clone());
+
+        let error = state
+            .set_ocr_region(Some(region(1200, 120)))
+            .expect_err("must fail");
+
+        assert!(matches!(error, AppError::OcrUnavailable(_)));
+        assert_eq!(
+            error.to_string(),
+            "text recognition is not available: the OCR models are missing"
+        );
+        assert_eq!(handle.get(), None);
+        assert!(!state.status().expect("status").ocr_available);
+    }
+}

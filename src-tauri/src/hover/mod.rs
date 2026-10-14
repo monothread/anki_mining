@@ -1,0 +1,556 @@
+//! Looking up the word under the mouse cursor on the whole screen.
+
+pub mod locate;
+pub mod placement;
+pub mod trigger;
+
+use serde::Serialize;
+use thiserror::Error;
+
+use crate::capture::{CaptureError, Region, ScreenCapture};
+use crate::dictionary::ScanResult;
+use crate::ocr::{OcrEngine, OcrError};
+use crate::tokenizer::{Tokenizer, TokenizerError};
+
+use self::locate::{character_at, word_at};
+
+#[derive(Debug, Error)]
+pub enum HoverError {
+    #[error(transparent)]
+    Capture(#[from] CaptureError),
+    #[error(transparent)]
+    Ocr(#[from] OcrError),
+    #[error(transparent)]
+    Tokenizer(#[from] TokenizerError),
+    #[error("dictionary lookup failed: {0}")]
+    Dictionary(String),
+}
+
+/// Looks a sentence up from a UTF-16 offset (see `AppState::scan_at`).
+pub type SentenceScan<'a> = dyn Fn(&str, usize) -> Result<Vec<ScanResult>, String> + 'a;
+
+/// The word found under the cursor, ready for the popup.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HoverResult {
+    /// The OCR line the word is in.
+    pub sentence: String,
+    /// Where the word starts in `sentence` (UTF-16 code units).
+    pub word_start: usize,
+    /// Dictionary matches for the text starting at `word_start`, longest first.
+    pub results: Vec<ScanResult>,
+    /// `[x1, y1, x2, y2]` of the character under the cursor, in screen pixels.
+    pub char_bbox: [i32; 4],
+    /// `[x1, y1, x2, y2]` of the whole line, in screen pixels.
+    pub line_bbox: [i32; 4],
+}
+
+/// What a lookup found at the cursor; the reasons for finding nothing are told to the user.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LookupOutcome {
+    Found(HoverResult),
+    /// No character of recognized text is at the cursor; `lines` is how many lines the OCR read
+    /// near it.
+    NoText {
+        lines: usize,
+    },
+    /// The character under the cursor is punctuation or a symbol.
+    NotAWord {
+        text: String,
+    },
+}
+
+impl LookupOutcome {
+    /// A short sentence for the user when nothing was found; `None` when a word was found.
+    pub fn explanation(&self) -> Option<String> {
+        match self {
+            LookupOutcome::Found(result) if result.results.is_empty() => {
+                let word: String = result
+                    .sentence
+                    .chars()
+                    .skip(char_index(&result.sentence, result.word_start))
+                    .take(2)
+                    .collect();
+                Some(format!(
+                    "No dictionary entry for the word starting with \"{word}\""
+                ))
+            }
+            LookupOutcome::Found(_) => None,
+            LookupOutcome::NoText { lines: 0 } => {
+                Some("No text recognized under the cursor".to_string())
+            }
+            LookupOutcome::NoText { lines } => Some(format!(
+                "The cursor is not on a character ({lines} line(s) of text were read near it)"
+            )),
+            LookupOutcome::NotAWord { text } => Some(format!(
+                "No word under the cursor (punctuation in \"{text}\")"
+            )),
+        }
+    }
+}
+
+/// Index in characters of a UTF-16 offset of `text`.
+fn char_index(text: &str, utf16_offset: usize) -> usize {
+    let mut units = 0;
+    for (index, character) in text.chars().enumerate() {
+        if units >= utf16_offset {
+            return index;
+        }
+        units += character.len_utf16();
+    }
+    text.chars().count()
+}
+
+/// Reads the screen around `cursor` and finds the dictionary entries for the word under it.
+///
+/// `scan` looks a sentence up from a UTF-16 offset (see `AppState::scan_at`).
+pub fn lookup_at(
+    capture: &mut dyn ScreenCapture,
+    engine: &mut dyn OcrEngine,
+    tokenizer: &Tokenizer,
+    scan: &SentenceScan,
+    cursor: (i32, i32),
+) -> Result<LookupOutcome, HoverError> {
+    let (width, height) = capture.screen_size();
+    let screen = capture.capture(Region {
+        x: 0,
+        y: 0,
+        width,
+        height,
+    })?;
+    let lines = engine.recognize_near(&screen, cursor)?;
+
+    let Some(hit) = character_at(&lines, cursor) else {
+        return Ok(LookupOutcome::NoText { lines: lines.len() });
+    };
+    let tokens = tokenizer.tokenize(&hit.text)?;
+    let Some(token) = word_at(&tokens, hit.offset) else {
+        return Ok(LookupOutcome::NotAWord { text: hit.text });
+    };
+    let results = scan(&hit.text, token.start).map_err(HoverError::Dictionary)?;
+    Ok(LookupOutcome::Found(HoverResult {
+        sentence: hit.text,
+        word_start: token.start,
+        results,
+        char_bbox: hit.char_bbox,
+        line_bbox: hit.line_bbox,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use image::{Rgb, RgbImage};
+
+    use super::*;
+    use crate::dictionary::Dictionary;
+    use crate::ocr::{MeikiEngine, OcrLine};
+    use crate::text_offsets::utf16_offset_to_byte;
+
+    const SCREEN_WIDTH: u32 = 1920;
+    const SCREEN_HEIGHT: u32 = 1080;
+    const BAND_TOP: u32 = 700;
+    const FIXTURE: &str = "00_1080p_outline_busy__jpeg25.png";
+    const FIXTURE_TEXT: &str = "昨日、友達と映画を見に行きました。";
+
+    const DICTIONARY_JSON: &str = r#"{ "tags": {}, "words": [
+        { "id": "1", "kanji": [{ "common": true, "text": "友達", "tags": [] }],
+          "kana": [{ "common": true, "text": "ともだち", "tags": [], "appliesToKanji": ["*"] }],
+          "sense": [{ "partOfSpeech": ["n"], "gloss": [{ "text": "friend" }] }] },
+        { "id": "2", "kanji": [{ "common": true, "text": "映画", "tags": [] }],
+          "kana": [{ "common": true, "text": "えいが", "tags": [], "appliesToKanji": ["*"] }],
+          "sense": [{ "partOfSpeech": ["n"], "gloss": [{ "text": "movie" }] }] },
+        { "id": "3", "kanji": [{ "common": true, "text": "行く", "tags": [] }],
+          "kana": [{ "common": true, "text": "いく", "tags": [], "appliesToKanji": ["*"] }],
+          "sense": [{ "partOfSpeech": ["v5k-s", "vi"], "gloss": [{ "text": "to go" }] }] }
+    ] }"#;
+
+    /// A screen that always returns the same prepared image.
+    struct FakeScreen(RgbImage);
+
+    impl ScreenCapture for FakeScreen {
+        fn screen_size(&self) -> (u32, u32) {
+            (self.0.width(), self.0.height())
+        }
+
+        fn capture(&mut self, region: Region) -> Result<RgbImage, CaptureError> {
+            assert_eq!(
+                region,
+                Region {
+                    x: 0,
+                    y: 0,
+                    width: self.0.width(),
+                    height: self.0.height()
+                }
+            );
+            Ok(self.0.clone())
+        }
+    }
+
+    struct BrokenScreen;
+
+    impl ScreenCapture for BrokenScreen {
+        fn screen_size(&self) -> (u32, u32) {
+            (100, 100)
+        }
+
+        fn capture(&mut self, _region: Region) -> Result<RgbImage, CaptureError> {
+            Err(CaptureError::Failed("no access".to_string()))
+        }
+    }
+
+    struct FixedEngine(Vec<OcrLine>);
+
+    impl OcrEngine for FixedEngine {
+        fn recognize(&mut self, _image: &RgbImage) -> Result<Vec<OcrLine>, OcrError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    struct BrokenEngine;
+
+    impl OcrEngine for BrokenEngine {
+        fn recognize(&mut self, _image: &RgbImage) -> Result<Vec<OcrLine>, OcrError> {
+            Err(OcrError::Inference("boom".to_string()))
+        }
+    }
+
+    fn real_engine() -> MeikiEngine {
+        let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/ocr");
+        MeikiEngine::from_directory(&directory)
+            .unwrap_or_else(|error| panic!("{error}; run scripts/fetch-ocr-models.sh"))
+    }
+
+    /// A black Full HD screen with the subtitle fixture pasted near the bottom.
+    fn screen_with_subtitle() -> RgbImage {
+        let band = image::open(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/ocr")
+                .join(FIXTURE),
+        )
+        .expect("fixture")
+        .to_rgb8();
+        let mut screen = RgbImage::from_pixel(SCREEN_WIDTH, SCREEN_HEIGHT, Rgb([0, 0, 0]));
+        image::imageops::replace(&mut screen, &band, 0, i64::from(BAND_TOP));
+        screen
+    }
+
+    fn dictionary_scan() -> impl Fn(&str, usize) -> Result<Vec<ScanResult>, String> {
+        let mut dictionary = Dictionary::open_in_memory().expect("dictionary");
+        dictionary
+            .import_jmdict(DICTIONARY_JSON.as_bytes())
+            .expect("import");
+        move |sentence, start| {
+            let byte =
+                utf16_offset_to_byte(sentence, start).ok_or("offset outside the sentence")?;
+            dictionary
+                .scan(&sentence[byte..])
+                .map_err(|error| error.to_string())
+        }
+    }
+
+    fn found(outcome: LookupOutcome) -> HoverResult {
+        match outcome {
+            LookupOutcome::Found(result) => result,
+            other => panic!("expected a word, got {other:?}"),
+        }
+    }
+
+    fn center(bbox: [i32; 4]) -> (i32, i32) {
+        ((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2)
+    }
+
+    #[test]
+    fn finds_the_word_under_the_cursor_on_a_real_screenshot() {
+        let mut screen = FakeScreen(screen_with_subtitle());
+        let mut engine = real_engine();
+        let tokenizer = Tokenizer::new().expect("tokenizer");
+        let scan = dictionary_scan();
+        // Aim the cursor at the middle of the character 友 (index 3), found by the same OCR.
+        let lines = engine.recognize(&screen_with_subtitle()).expect("ocr");
+        let cursor = center(lines[0].chars[3].bbox);
+
+        let result = lookup_at(&mut screen, &mut engine, &tokenizer, &scan, cursor)
+            .map(found)
+            .expect("lookup");
+
+        assert_eq!(result.sentence, FIXTURE_TEXT);
+        assert_eq!(result.word_start, 3);
+        assert_eq!(result.results.len(), 1);
+        assert_eq!(result.results[0].source, "友達");
+        assert_eq!(result.results[0].length, 2);
+        assert_eq!(result.results[0].entries[0].entry.expression, "友達");
+        assert_eq!(result.results[0].entries[0].entry.reading, "ともだち");
+        assert_eq!(
+            result.results[0].entries[0].entry.meanings,
+            vec!["friend".to_string()]
+        );
+        assert_eq!(result.char_bbox, lines[0].chars[3].bbox);
+        assert_eq!(result.line_bbox, lines[0].bbox);
+        assert!(
+            result.line_bbox[1] >= BAND_TOP as i32,
+            "the line is inside the pasted band"
+        );
+    }
+
+    #[test]
+    fn resolves_an_inflected_verb_to_its_dictionary_form() {
+        let mut screen = FakeScreen(screen_with_subtitle());
+        let mut engine = real_engine();
+        let tokenizer = Tokenizer::new().expect("tokenizer");
+        let scan = dictionary_scan();
+        let lines = engine.recognize(&screen_with_subtitle()).expect("ocr");
+        // 行きました: 行 is the character at index 11.
+        let cursor = center(lines[0].chars[11].bbox);
+
+        let result = lookup_at(&mut screen, &mut engine, &tokenizer, &scan, cursor)
+            .map(found)
+            .expect("lookup");
+
+        assert_eq!(result.word_start, 11);
+        assert_eq!(result.results[0].source, "行きました");
+        assert_eq!(result.results[0].entries[0].entry.expression, "行く");
+        assert_eq!(result.results[0].entries[0].reasons, vec!["past", "polite"]);
+    }
+
+    #[test]
+    fn a_word_without_a_dictionary_entry_gives_an_empty_result_list() {
+        let mut screen = FakeScreen(screen_with_subtitle());
+        let mut engine = real_engine();
+        let tokenizer = Tokenizer::new().expect("tokenizer");
+        let scan = dictionary_scan();
+        let lines = engine.recognize(&screen_with_subtitle()).expect("ocr");
+        // 昨日 is not in the small test dictionary.
+        let cursor = center(lines[0].chars[0].bbox);
+
+        let result = lookup_at(&mut screen, &mut engine, &tokenizer, &scan, cursor)
+            .map(found)
+            .expect("lookup");
+
+        assert_eq!(result.word_start, 0);
+        assert_eq!(result.results, vec![]);
+    }
+
+    #[test]
+    fn the_cursor_on_empty_screen_finds_nothing() {
+        let mut screen = FakeScreen(screen_with_subtitle());
+        let mut engine = real_engine();
+        let tokenizer = Tokenizer::new().expect("tokenizer");
+        let scan = dictionary_scan();
+
+        let result =
+            lookup_at(&mut screen, &mut engine, &tokenizer, &scan, (200, 100)).expect("lookup");
+
+        assert_eq!(result, LookupOutcome::NoText { lines: 0 });
+    }
+
+    fn line_of(text: &str, x: i32) -> OcrLine {
+        use crate::ocr::OcrChar;
+        let chars: Vec<OcrChar> = text
+            .chars()
+            .enumerate()
+            .map(|(index, character)| OcrChar {
+                character,
+                bbox: [x + index as i32 * 40, 100, x + (index as i32 + 1) * 40, 150],
+                confidence: 0.9,
+            })
+            .collect();
+        OcrLine {
+            text: text.to_string(),
+            bbox: [x, 100, x + chars.len() as i32 * 40, 150],
+            chars,
+        }
+    }
+
+    fn blank_screen() -> FakeScreen {
+        FakeScreen(RgbImage::new(400, 300))
+    }
+
+    fn unused_scan() -> impl Fn(&str, usize) -> Result<Vec<ScanResult>, String> {
+        |_, _| Ok(vec![])
+    }
+
+    #[test]
+    fn punctuation_under_the_cursor_is_not_a_word() {
+        let mut engine = FixedEngine(vec![line_of("猫。", 0)]);
+        let tokenizer = Tokenizer::new().expect("tokenizer");
+
+        let result = lookup_at(
+            &mut blank_screen(),
+            &mut engine,
+            &tokenizer,
+            &unused_scan(),
+            (60, 120),
+        );
+
+        assert_eq!(
+            result.expect("lookup"),
+            LookupOutcome::NotAWord {
+                text: "猫。".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn the_scan_receives_the_sentence_and_the_offset_of_the_token() {
+        let mut engine = FixedEngine(vec![line_of("私は猫が好き", 0)]);
+        let tokenizer = Tokenizer::new().expect("tokenizer");
+        let calls = std::cell::RefCell::new(Vec::new());
+        let scan = |sentence: &str, start: usize| {
+            calls.borrow_mut().push((sentence.to_string(), start));
+            Ok(vec![])
+        };
+
+        // The cursor is on 猫 (third character).
+        lookup_at(
+            &mut blank_screen(),
+            &mut engine,
+            &tokenizer,
+            &scan,
+            (100, 120),
+        )
+        .expect("lookup");
+
+        assert_eq!(*calls.borrow(), vec![("私は猫が好き".to_string(), 2)]);
+    }
+
+    #[test]
+    fn errors_from_the_screen_the_ocr_and_the_dictionary_are_reported() {
+        let tokenizer = Tokenizer::new().expect("tokenizer");
+
+        let capture = lookup_at(
+            &mut BrokenScreen,
+            &mut FixedEngine(vec![]),
+            &tokenizer,
+            &unused_scan(),
+            (1, 1),
+        );
+        let ocr = lookup_at(
+            &mut blank_screen(),
+            &mut BrokenEngine,
+            &tokenizer,
+            &unused_scan(),
+            (1, 1),
+        );
+        let failing_scan = |_: &str, _: usize| Err("database locked".to_string());
+        let dictionary = lookup_at(
+            &mut blank_screen(),
+            &mut FixedEngine(vec![line_of("猫", 0)]),
+            &tokenizer,
+            &failing_scan,
+            (10, 120),
+        );
+
+        assert_eq!(
+            capture.expect_err("capture").to_string(),
+            "screen capture failed: no access"
+        );
+        assert_eq!(
+            ocr.expect_err("ocr").to_string(),
+            "OCR inference failed: boom"
+        );
+        assert_eq!(
+            dictionary.expect_err("dictionary").to_string(),
+            "dictionary lookup failed: database locked"
+        );
+    }
+
+    #[test]
+    fn a_result_serializes_with_camel_case_keys() {
+        let result = HoverResult {
+            sentence: "猫".to_string(),
+            word_start: 0,
+            results: vec![],
+            char_bbox: [1, 2, 3, 4],
+            line_bbox: [0, 2, 10, 4],
+        };
+
+        assert_eq!(
+            serde_json::to_value(result).expect("serialize"),
+            serde_json::json!({
+                "sentence": "猫",
+                "wordStart": 0,
+                "results": [],
+                "charBbox": [1, 2, 3, 4],
+                "lineBbox": [0, 2, 10, 4]
+            })
+        );
+    }
+
+    #[test]
+    fn a_cursor_beside_text_reports_how_many_lines_were_read_nearby() {
+        let mut engine = FixedEngine(vec![line_of("猫", 0)]);
+        let tokenizer = Tokenizer::new().expect("tokenizer");
+
+        let outcome = lookup_at(
+            &mut blank_screen(),
+            &mut engine,
+            &tokenizer,
+            &unused_scan(),
+            (350, 120),
+        )
+        .expect("lookup");
+
+        assert_eq!(outcome, LookupOutcome::NoText { lines: 1 });
+    }
+
+    #[test]
+    fn explanations_tell_the_user_why_nothing_was_shown() {
+        let empty_entry = LookupOutcome::Found(HoverResult {
+            sentence: "私は猫が好き".to_string(),
+            word_start: 2,
+            results: vec![],
+            char_bbox: [0, 0, 1, 1],
+            line_bbox: [0, 0, 1, 1],
+        });
+
+        assert_eq!(
+            empty_entry.explanation(),
+            Some("No dictionary entry for the word starting with \"猫が\"".to_string())
+        );
+        assert_eq!(
+            LookupOutcome::NoText { lines: 0 }.explanation(),
+            Some("No text recognized under the cursor".to_string())
+        );
+        assert_eq!(
+            LookupOutcome::NoText { lines: 3 }.explanation(),
+            Some(
+                "The cursor is not on a character (3 line(s) of text were read near it)"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            LookupOutcome::NotAWord {
+                text: "猫。".to_string()
+            }
+            .explanation(),
+            Some("No word under the cursor (punctuation in \"猫。\")".to_string())
+        );
+    }
+
+    #[test]
+    fn a_word_with_entries_needs_no_explanation() {
+        let found_word = LookupOutcome::Found(HoverResult {
+            sentence: "猫".to_string(),
+            word_start: 0,
+            results: vec![crate::dictionary::ScanResult {
+                source: "猫".to_string(),
+                length: 1,
+                entries: vec![],
+            }],
+            char_bbox: [0, 0, 1, 1],
+            line_bbox: [0, 0, 1, 1],
+        });
+
+        assert_eq!(found_word.explanation(), None);
+    }
+
+    #[test]
+    fn char_index_converts_utf16_offsets() {
+        assert_eq!(char_index("😀猫が", 0), 0);
+        assert_eq!(char_index("😀猫が", 2), 1);
+        assert_eq!(char_index("😀猫が", 3), 2);
+        assert_eq!(char_index("猫", 5), 1);
+    }
+}

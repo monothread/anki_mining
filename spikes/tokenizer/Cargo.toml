@@ -1,0 +1,9 @@
+[package]
+name = "tokenizer-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+lindera = { version = "6", features = ["embed-unidic", "embed-ipadic"] }
+lindera-analysis = "6"

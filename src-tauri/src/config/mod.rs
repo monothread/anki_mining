@@ -1,0 +1,599 @@
+use std::collections::HashSet;
+use std::fs;
+use std::io;
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::hover::trigger::{TriggerKey, TriggerMode, DEFAULT_DWELL_MS};
+use crate::types::profile::{default_field_mapping, Profile, ProfileMatch};
+
+pub const DEFAULT_ANKI_CONNECT_URL: &str = "http://127.0.0.1:8765";
+/// Same port used by Textractor's websocket extension, so existing setups work unchanged.
+pub const DEFAULT_WEBSOCKET_PORT: u16 = 6677;
+pub const DEFAULT_PROFILE_ID: &str = "default";
+pub const DEFAULT_MINING_HOTKEY: &str = "Alt+M";
+pub const MIN_DWELL_MS: u64 = 100;
+pub const MAX_DWELL_MS: u64 = 3_000;
+pub const DEFAULT_DECK_NAME: &str = "Mining";
+pub const DEFAULT_MODEL_NAME: &str = "AnkiMining";
+
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("failed to access config file `{path}`: {source}")]
+    Io {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("config file `{path}` is not valid JSON: {source}")]
+    Parse {
+        path: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("invalid config: {}", .0.join("; "))]
+    Invalid(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Config {
+    pub anki_connect_url: String,
+    pub websocket_port: u16,
+    /// Global shortcut that mines the word currently selected in the overlay.
+    pub mining_hotkey: String,
+    /// How the lookup under the mouse cursor starts: hold a key, or let the cursor rest.
+    pub hover_mode: TriggerMode,
+    /// The key to hold in `hold` mode.
+    pub hover_key: TriggerKey,
+    /// How long the cursor must rest in `auto` mode, in milliseconds.
+    pub hover_dwell_ms: u64,
+    pub default_profile_id: String,
+    pub profiles: Vec<Profile>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            anki_connect_url: DEFAULT_ANKI_CONNECT_URL.to_string(),
+            websocket_port: DEFAULT_WEBSOCKET_PORT,
+            mining_hotkey: DEFAULT_MINING_HOTKEY.to_string(),
+            hover_mode: TriggerMode::Hold,
+            hover_key: TriggerKey::Shift,
+            hover_dwell_ms: DEFAULT_DWELL_MS,
+            default_profile_id: DEFAULT_PROFILE_ID.to_string(),
+            profiles: vec![default_profile()],
+        }
+    }
+}
+
+pub fn default_profile() -> Profile {
+    Profile {
+        id: DEFAULT_PROFILE_ID.to_string(),
+        name: "Default".to_string(),
+        deck_name: DEFAULT_DECK_NAME.to_string(),
+        model_name: DEFAULT_MODEL_NAME.to_string(),
+        field_mapping: default_field_mapping(),
+        r#match: ProfileMatch {
+            source_id: None,
+            app_name: None,
+        },
+    }
+}
+
+impl Config {
+    /// Loads and validates the config at `path`. A missing file yields the defaults.
+    pub fn load(path: &Path) -> Result<Config, ConfigError> {
+        let contents = match fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(Config::default());
+            }
+            Err(source) => return Err(io_error(path, source)),
+        };
+
+        let config: Config =
+            serde_json::from_str(&contents).map_err(|source| ConfigError::Parse {
+                path: path.display().to_string(),
+                source,
+            })?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Validates and atomically writes the config to `path`, creating parent folders.
+    pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
+        self.validate()?;
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|source| io_error(parent, source))?;
+        }
+
+        let serialized =
+            serde_json::to_string_pretty(self).map_err(|source| ConfigError::Parse {
+                path: path.display().to_string(),
+                source,
+            })?;
+        let temporary_path = path.with_extension("json.tmp");
+        fs::write(&temporary_path, serialized)
+            .map_err(|source| io_error(&temporary_path, source))?;
+        fs::rename(&temporary_path, path).map_err(|source| io_error(path, source))
+    }
+
+    pub fn profile(&self, id: &str) -> Option<&Profile> {
+        self.profiles.iter().find(|profile| profile.id == id)
+    }
+
+    pub fn default_profile(&self) -> Option<&Profile> {
+        self.profile(&self.default_profile_id)
+    }
+
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        let mut problems = Vec::new();
+
+        if !is_http_url(&self.anki_connect_url) {
+            problems.push(format!(
+                "ankiConnectUrl must start with http:// or https:// (got `{}`)",
+                self.anki_connect_url
+            ));
+        }
+        if self.websocket_port == 0 {
+            problems.push("websocketPort must be between 1 and 65535".to_string());
+        }
+        if self.mining_hotkey.trim().is_empty() {
+            problems.push("miningHotkey must not be empty".to_string());
+        }
+        if !(MIN_DWELL_MS..=MAX_DWELL_MS).contains(&self.hover_dwell_ms) {
+            problems.push(format!(
+                "hoverDwellMs must be between {MIN_DWELL_MS} and {MAX_DWELL_MS} (got {})",
+                self.hover_dwell_ms
+            ));
+        }
+        if self.profiles.is_empty() {
+            problems.push("at least one profile is required".to_string());
+        }
+        problems.extend(self.profile_problems());
+        if !self
+            .profiles
+            .iter()
+            .any(|profile| profile.id == self.default_profile_id)
+        {
+            problems.push(format!(
+                "defaultProfileId `{}` does not match any profile",
+                self.default_profile_id
+            ));
+        }
+
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(ConfigError::Invalid(problems))
+        }
+    }
+
+    fn profile_problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        let mut seen_ids = HashSet::new();
+
+        for profile in &self.profiles {
+            if profile.id.trim().is_empty() {
+                problems.push("profile id must not be empty".to_string());
+            } else if !seen_ids.insert(profile.id.as_str()) {
+                problems.push(format!("duplicate profile id `{}`", profile.id));
+            }
+            if profile.deck_name.trim().is_empty() {
+                problems.push(format!("profile `{}` has an empty deckName", profile.id));
+            }
+            if profile.model_name.trim().is_empty() {
+                problems.push(format!("profile `{}` has an empty modelName", profile.id));
+            }
+        }
+
+        problems
+    }
+}
+
+fn is_http_url(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
+}
+
+fn io_error(path: &Path, source: io::Error) -> ConfigError {
+    ConfigError::Io {
+        path: path.display().to_string(),
+        source,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    use super::*;
+
+    fn invalid_messages(config: &Config) -> Vec<String> {
+        match config.validate() {
+            Err(ConfigError::Invalid(messages)) => messages,
+            other => panic!("expected an Invalid error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn default_config_uses_the_documented_values_and_is_valid() {
+        let config = Config::default();
+
+        assert_eq!(config.anki_connect_url, "http://127.0.0.1:8765");
+        assert_eq!(config.websocket_port, 6677);
+        assert_eq!(config.mining_hotkey, "Alt+M");
+        assert_eq!(config.hover_mode, TriggerMode::Hold);
+        assert_eq!(config.hover_key, TriggerKey::Shift);
+        assert_eq!(config.hover_dwell_ms, 300);
+        assert_eq!(config.default_profile_id, "default");
+        assert_eq!(config.profiles, vec![default_profile()]);
+        assert_eq!(config.profiles[0].deck_name, "Mining");
+        assert_eq!(config.profiles[0].model_name, "AnkiMining");
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn default_config_serializes_with_camel_case_keys() {
+        let value = serde_json::to_value(Config::default()).expect("config must serialize");
+
+        assert_eq!(value["ankiConnectUrl"], json!("http://127.0.0.1:8765"));
+        assert_eq!(value["websocketPort"], json!(6677));
+        assert_eq!(value["miningHotkey"], json!("Alt+M"));
+        assert_eq!(value["hoverMode"], json!("hold"));
+        assert_eq!(value["hoverKey"], json!("shift"));
+        assert_eq!(value["hoverDwellMs"], json!(300));
+        assert_eq!(value["defaultProfileId"], json!("default"));
+        assert_eq!(value["profiles"][0]["deckName"], json!("Mining"));
+    }
+
+    #[test]
+    fn load_returns_defaults_when_the_file_does_not_exist() {
+        let directory = tempdir().expect("temp dir");
+
+        let config = Config::load(&directory.path().join("missing.json")).expect("load");
+
+        assert_eq!(config, Config::default());
+    }
+
+    #[test]
+    fn load_fills_missing_fields_with_defaults() {
+        let directory = tempdir().expect("temp dir");
+        let path = directory.path().join("config.json");
+        fs::write(&path, r#"{ "websocketPort": 7000 }"#).expect("write");
+
+        let config = Config::load(&path).expect("load");
+
+        assert_eq!(
+            config,
+            Config {
+                websocket_port: 7000,
+                ..Config::default()
+            }
+        );
+    }
+
+    #[test]
+    fn load_fails_with_a_parse_error_on_malformed_json() {
+        let directory = tempdir().expect("temp dir");
+        let path = directory.path().join("config.json");
+        fs::write(&path, "{ not json").expect("write");
+
+        let error = Config::load(&path).expect_err("must fail");
+
+        assert!(matches!(error, ConfigError::Parse { .. }));
+        assert!(error.to_string().contains("is not valid JSON"));
+    }
+
+    #[test]
+    fn load_fails_with_an_io_error_when_the_path_is_a_directory() {
+        let directory = tempdir().expect("temp dir");
+
+        let error = Config::load(directory.path()).expect_err("must fail");
+
+        assert!(matches!(error, ConfigError::Io { .. }));
+    }
+
+    #[test]
+    fn load_rejects_a_file_that_parses_but_is_invalid() {
+        let directory = tempdir().expect("temp dir");
+        let path = directory.path().join("config.json");
+        fs::write(&path, r#"{ "websocketPort": 0 }"#).expect("write");
+
+        let error = Config::load(&path).expect_err("must fail");
+
+        assert!(matches!(error, ConfigError::Invalid(_)));
+    }
+
+    #[test]
+    fn save_creates_parent_folders_and_round_trips() {
+        let directory = tempdir().expect("temp dir");
+        let path = directory.path().join("nested").join("config.json");
+        let config = Config {
+            websocket_port: 7001,
+            ..Config::default()
+        };
+
+        config.save(&path).expect("save");
+        let loaded = Config::load(&path).expect("load");
+
+        assert_eq!(loaded, config);
+        assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn save_overwrites_an_existing_file() {
+        let directory = tempdir().expect("temp dir");
+        let path = directory.path().join("config.json");
+        Config::default().save(&path).expect("first save");
+        let updated = Config {
+            websocket_port: 7002,
+            ..Config::default()
+        };
+
+        updated.save(&path).expect("second save");
+
+        assert_eq!(Config::load(&path).expect("load"), updated);
+    }
+
+    #[test]
+    fn save_refuses_an_invalid_config_and_leaves_no_file() {
+        let directory = tempdir().expect("temp dir");
+        let path = directory.path().join("config.json");
+        let config = Config {
+            websocket_port: 0,
+            ..Config::default()
+        };
+
+        let error = config.save(&path).expect_err("must fail");
+
+        assert!(matches!(error, ConfigError::Invalid(_)));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn save_fails_with_an_io_error_when_the_parent_is_a_file() {
+        let directory = tempdir().expect("temp dir");
+        let blocker = directory.path().join("blocker");
+        fs::write(&blocker, "x").expect("write");
+
+        let error = Config::default()
+            .save(&blocker.join("config.json"))
+            .expect_err("must fail");
+
+        assert!(matches!(error, ConfigError::Io { .. }));
+    }
+
+    #[test]
+    fn validate_rejects_a_non_http_anki_connect_url() {
+        let config = Config {
+            anki_connect_url: "127.0.0.1:8765".to_string(),
+            ..Config::default()
+        };
+
+        assert_eq!(
+            invalid_messages(&config),
+            vec!["ankiConnectUrl must start with http:// or https:// (got `127.0.0.1:8765`)"]
+        );
+    }
+
+    #[test]
+    fn validate_accepts_https_urls() {
+        let config = Config {
+            anki_connect_url: "https://example.test:8765".to_string(),
+            ..Config::default()
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_port_zero() {
+        let config = Config {
+            websocket_port: 0,
+            ..Config::default()
+        };
+
+        assert_eq!(
+            invalid_messages(&config),
+            vec!["websocketPort must be between 1 and 65535"]
+        );
+    }
+
+    #[test]
+    fn validate_rejects_a_blank_mining_hotkey() {
+        let config = Config {
+            mining_hotkey: "  ".to_string(),
+            ..Config::default()
+        };
+
+        assert_eq!(
+            invalid_messages(&config),
+            vec!["miningHotkey must not be empty"]
+        );
+    }
+
+    #[test]
+    fn validate_rejects_an_empty_profile_list() {
+        let config = Config {
+            profiles: vec![],
+            ..Config::default()
+        };
+
+        assert_eq!(
+            invalid_messages(&config),
+            vec![
+                "at least one profile is required",
+                "defaultProfileId `default` does not match any profile"
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_and_empty_profile_ids() {
+        let duplicate = default_profile();
+        let blank = Profile {
+            id: "  ".to_string(),
+            ..default_profile()
+        };
+        let config = Config {
+            profiles: vec![default_profile(), duplicate, blank],
+            ..Config::default()
+        };
+
+        assert_eq!(
+            invalid_messages(&config),
+            vec![
+                "duplicate profile id `default`",
+                "profile id must not be empty"
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_rejects_empty_deck_and_model_names() {
+        let profile = Profile {
+            deck_name: " ".to_string(),
+            model_name: String::new(),
+            ..default_profile()
+        };
+        let config = Config {
+            profiles: vec![profile],
+            ..Config::default()
+        };
+
+        assert_eq!(
+            invalid_messages(&config),
+            vec![
+                "profile `default` has an empty deckName",
+                "profile `default` has an empty modelName"
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_rejects_an_unknown_default_profile_id() {
+        let config = Config {
+            default_profile_id: "ghost".to_string(),
+            ..Config::default()
+        };
+
+        assert_eq!(
+            invalid_messages(&config),
+            vec!["defaultProfileId `ghost` does not match any profile"]
+        );
+    }
+
+    #[test]
+    fn validate_reports_every_problem_at_once() {
+        let config = Config {
+            anki_connect_url: "ftp://x".to_string(),
+            websocket_port: 0,
+            default_profile_id: "ghost".to_string(),
+            ..Config::default()
+        };
+
+        assert_eq!(invalid_messages(&config).len(), 3);
+    }
+
+    #[test]
+    fn invalid_error_joins_the_messages() {
+        let error = ConfigError::Invalid(vec!["a".to_string(), "b".to_string()]);
+
+        assert_eq!(error.to_string(), "invalid config: a; b");
+    }
+
+    #[test]
+    fn profile_finds_a_profile_by_id() {
+        let games = Profile {
+            id: "games".to_string(),
+            name: "Games".to_string(),
+            deck_name: "Games".to_string(),
+            ..default_profile()
+        };
+        let config = Config {
+            profiles: vec![default_profile(), games.clone()],
+            ..Config::default()
+        };
+
+        assert_eq!(config.profile("games"), Some(&games));
+        assert_eq!(config.profile("default"), Some(&default_profile()));
+        assert_eq!(config.profile("ghost"), None);
+    }
+
+    #[test]
+    fn default_profile_follows_default_profile_id() {
+        let games = Profile {
+            id: "games".to_string(),
+            ..default_profile()
+        };
+        let config = Config {
+            default_profile_id: "games".to_string(),
+            profiles: vec![default_profile(), games.clone()],
+            ..Config::default()
+        };
+
+        assert_eq!(config.default_profile(), Some(&games));
+        assert_eq!(
+            Config::default().default_profile(),
+            Some(&default_profile())
+        );
+    }
+
+    #[test]
+    fn hover_settings_can_be_loaded_from_a_file() {
+        let directory = tempdir().expect("temp dir");
+        let path = directory.path().join("config.json");
+        fs::write(
+            &path,
+            r#"{ "hoverMode": "auto", "hoverKey": "alt", "hoverDwellMs": 450 }"#,
+        )
+        .expect("write");
+
+        let config = Config::load(&path).expect("load");
+
+        assert_eq!(config.hover_mode, TriggerMode::Auto);
+        assert_eq!(config.hover_key, TriggerKey::Alt);
+        assert_eq!(config.hover_dwell_ms, 450);
+    }
+
+    #[test]
+    fn an_unknown_hover_mode_is_a_parse_error() {
+        let directory = tempdir().expect("temp dir");
+        let path = directory.path().join("config.json");
+        fs::write(&path, r#"{ "hoverMode": "telepathy" }"#).expect("write");
+
+        assert!(matches!(
+            Config::load(&path),
+            Err(ConfigError::Parse { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_limits_the_dwell_time() {
+        for dwell in [MIN_DWELL_MS - 1, MAX_DWELL_MS + 1, 0] {
+            let config = Config {
+                hover_dwell_ms: dwell,
+                ..Config::default()
+            };
+
+            assert_eq!(
+                invalid_messages(&config),
+                vec![format!(
+                    "hoverDwellMs must be between 100 and 3000 (got {dwell})"
+                )]
+            );
+        }
+        for dwell in [MIN_DWELL_MS, MAX_DWELL_MS] {
+            let config = Config {
+                hover_dwell_ms: dwell,
+                ..Config::default()
+            };
+            assert!(config.validate().is_ok());
+        }
+    }
+}

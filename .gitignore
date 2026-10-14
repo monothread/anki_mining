@@ -1,0 +1,12 @@
+node_modules/
+dist/
+web-dist/
+.cache/
+src-tauri/target/
+src-tauri/gen/
+*.AppImage
+.env
+
+# OCR models and the ONNX Runtime library are downloaded by scripts/fetch-ocr-models.sh
+src-tauri/resources/ocr/*.onnx
+src-tauri/resources/ocr/*.so
