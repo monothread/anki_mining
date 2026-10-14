@@ -15,8 +15,13 @@ pub struct X11Pointer {
 impl X11Pointer {
     /// Connects to the display named by `$DISPLAY`.
     pub fn connect() -> Result<X11Pointer, PointerError> {
+        X11Pointer::connect_to(None)
+    }
+
+    /// Connects to the named display (`None`: the one in `$DISPLAY`).
+    pub fn connect_to(display: Option<&str>) -> Result<X11Pointer, PointerError> {
         let (connection, screen_number) =
-            x11rb::connect(None).map_err(|error| PointerError::Connection(error.to_string()))?;
+            x11rb::connect(display).map_err(|error| PointerError::Connection(error.to_string()))?;
         let root = connection
             .setup()
             .roots
@@ -235,15 +240,8 @@ mod tests {
     #[ignore = "needs an X11 display; run through `scripts/dev.sh test`"]
     fn connecting_fails_clearly_when_the_display_does_not_exist() {
         let _display = crate::x11_test_lock();
-        let original = std::env::var("DISPLAY").ok();
-        std::env::set_var("DISPLAY", ":987");
+        let result = X11Pointer::connect_to(Some(":987"));
 
-        let result = X11Pointer::connect();
-
-        match original {
-            Some(value) => std::env::set_var("DISPLAY", value),
-            None => std::env::remove_var("DISPLAY"),
-        }
         assert!(matches!(result, Err(PointerError::Connection(_))));
     }
 }

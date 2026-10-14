@@ -1,5 +1,6 @@
 pub mod anki;
 pub mod app;
+pub mod audio;
 pub mod capture;
 pub mod cards;
 pub mod config;

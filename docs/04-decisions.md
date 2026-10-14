@@ -61,7 +61,10 @@ Format: ID, date, status (Accepted / Superseded / Pending), context, decision, c
 - **Consequences:** Larger AppImage (OCR model files). OCR accuracy on subtitles over video is the main risk and is measured first (P3-01) on real material. CPU use is controlled by re-running OCR only when the captured region changes (P3-04). Wayland needs the screen-capture portal, deferred to P6-03.
 
 ## ADR-007 — Audio encoding (ffmpeg vs native crate)
-- **Status:** Pending — decide in task P2-03.
+- **Date:** 2026-10-14 · **Status:** Accepted
+- **Context:** Cards need the sentence audio. The user pauses the video first, so the sound must be recorded beforehand.
+- **Decision:** No ffmpeg and no encoder library. The app records the default output's monitor with `parec` (PulseAudio and PipeWire's Pulse layer) as mono 16 kHz 16-bit into a 60 s circular buffer; when a card is made the last stretch of speech (at most `audioSeconds`, default 8) is cut out, skipping the silence at the end and starting after the last pause longer than 600 ms, and stored as WAV (`storeMediaFile` through `addNote`'s `audio`). WAV is about 32 KB/s, so a clip is a few hundred KB, which Anki plays everywhere.
+- **Consequences:** `parec` must be installed on the host (it is on every desktop with PulseAudio or PipeWire-pulse); without it the app starts, warns once and makes cards without audio. Sound older than 60 s of pause is lost. Audio of one application (not the whole output) and exact subtitle timing (P4-03) are not done; a speech-recognition source stays undecided (P2-06).
 
 ## ADR-011 — Hover over the subtitle is the main interaction; the user pauses the video
 - **Date:** 2026-10-14 · **Status:** Accepted

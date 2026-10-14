@@ -13,8 +13,10 @@ a real Anki yet; cards have no picture or audio yet. See [docs/PROGRESS.md](docs
 ## Adding words to Anki
 
 With the popup open, click **Add to Anki** on the entry you want, or press **Alt+M** to add the first one.
-The card gets the word, its reading and meanings, the sentence with the word highlighted and a screenshot
-of the window the word was found in (turn it off with `screenshotOnCards: false` in `config.json`). Duplicates are
+The card gets the word, its reading and meanings, the sentence with the word highlighted a screenshot
+of the window the word was found in and the last seconds of sound that were playing (the app records the
+computer's audio output with `parec`, which comes with PulseAudio and PipeWire). Turn them off with
+`screenshotOnCards: false` or `audioOnCards: false` in `config.json`; `audioSeconds` sets the longest clip. Duplicates are
 refused. The popup tells you what happened.
 
 ## How it works

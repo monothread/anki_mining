@@ -8,8 +8,9 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::anki::{default_mining_model, AnkiClient, AnkiError};
+use crate::audio::{audio_file, SharedAudio};
 use crate::capture::Region;
-use crate::cards::{build_note, CardInput};
+use crate::cards::{build_note, CardInput, MediaFile};
 use crate::config::{Config, DEFAULT_MODEL_NAME};
 use crate::dictionary::{Dictionary, DictionaryError, ImportStats, ScanResult};
 use crate::hover::{card_input, HoverMemory};
@@ -77,6 +78,7 @@ pub struct AppState {
     startup: Startup,
     ocr_region: RegionHandle,
     model_ready: AtomicBool,
+    audio: Option<SharedAudio>,
 }
 
 impl AppState {
@@ -94,7 +96,27 @@ impl AppState {
             startup,
             ocr_region,
             model_ready: AtomicBool::new(false),
+            audio: None,
         }
+    }
+
+    /// Gives the state the recorded sound that cards take their audio from.
+    pub fn with_audio(mut self, audio: SharedAudio) -> AppState {
+        self.audio = Some(audio);
+        self
+    }
+
+    fn sentence_audio(&self) -> Option<MediaFile> {
+        if !self.config.audio_on_cards {
+            return None;
+        }
+        let clip = self
+            .audio
+            .as_ref()?
+            .lock()
+            .ok()?
+            .clip(self.config.audio_seconds as usize)?;
+        Some(audio_file(&clip, now_millis()))
     }
 
     pub fn status(&self) -> Result<Status, AppError> {
@@ -173,6 +195,7 @@ impl AppState {
                 .screenshot()
                 .and_then(|image| screenshot_file(&image, now_millis()).ok());
         }
+        input.audio = self.sentence_audio();
         self.mine(&input, None)
     }
 
@@ -812,5 +835,110 @@ mod tests {
         state.mine_from_hover(&memory, 0, 0).expect("note");
 
         assert_eq!(mock.requests()[1]["params"]["note"].get("picture"), None);
+    }
+
+    fn state_with_sound(config: Config, sound: &[i16]) -> AppState {
+        let audio = crate::audio::AudioBuffer::shared(60);
+        audio.lock().expect("audio").push(sound);
+        state_with(config).with_audio(audio)
+    }
+
+    fn speech() -> Vec<i16> {
+        vec![4000; 16_000]
+    }
+
+    #[test]
+    fn the_card_gets_the_sentence_audio_as_a_wav() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+        let state = state_with_sound(
+            Config {
+                anki_connect_url: mock.url.clone(),
+                ..Config::default()
+            },
+            &speech(),
+        );
+        let memory = HoverMemory::default();
+        remembered(&memory);
+
+        state.mine_from_hover(&memory, 0, 0).expect("note");
+
+        let audio = &mock.requests()[1]["params"]["note"]["audio"];
+        assert_eq!(audio.as_array().map(Vec::len), Some(1));
+        let filename = audio[0]["filename"].as_str().expect("filename");
+        assert!(
+            filename.starts_with("anki-mining-") && filename.ends_with(".wav"),
+            "{filename}"
+        );
+        assert_eq!(audio[0]["fields"], json!(["SentenceAudio"]));
+        let bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            audio[0]["data"].as_str().expect("data"),
+        )
+        .expect("base64");
+        assert_eq!(&bytes[..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+    }
+
+    #[test]
+    fn no_audio_is_sent_when_nothing_was_heard() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+        let state = state_with_sound(
+            Config {
+                anki_connect_url: mock.url.clone(),
+                ..Config::default()
+            },
+            &vec![0; 16_000],
+        );
+        let memory = HoverMemory::default();
+        remembered(&memory);
+
+        state.mine_from_hover(&memory, 0, 0).expect("note");
+
+        assert_eq!(mock.requests()[1]["params"]["note"].get("audio"), None);
+    }
+
+    #[test]
+    fn the_audio_can_be_turned_off_in_the_config() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+        let state = state_with_sound(
+            Config {
+                anki_connect_url: mock.url.clone(),
+                audio_on_cards: false,
+                ..Config::default()
+            },
+            &speech(),
+        );
+        let memory = HoverMemory::default();
+        remembered(&memory);
+
+        state.mine_from_hover(&memory, 0, 0).expect("note");
+
+        assert_eq!(mock.requests()[1]["params"]["note"].get("audio"), None);
+    }
+
+    #[test]
+    fn the_clip_respects_the_configured_length() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+        let state = state_with_sound(
+            Config {
+                anki_connect_url: mock.url.clone(),
+                audio_seconds: 1,
+                ..Config::default()
+            },
+            &vec![4000; 16_000 * 5],
+        );
+        let memory = HoverMemory::default();
+        remembered(&memory);
+
+        state.mine_from_hover(&memory, 0, 0).expect("note");
+
+        let audio = &mock.requests()[1]["params"]["note"]["audio"];
+        let bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            audio[0]["data"].as_str().expect("data"),
+        )
+        .expect("base64");
+        // Exactly 1 s: the padding never reaches past the limit or the end of the sound.
+        assert_eq!(bytes.len(), 44 + 16_000 * 2);
     }
 }

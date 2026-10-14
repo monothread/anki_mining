@@ -28,11 +28,11 @@ The product must work after installing a single app, with no browser extension o
 ## Phase 2 — Media on cards
 **Acceptance criteria:** the card automatically includes a screenshot and the sentence audio (last N seconds). Starts after Phase 3.
 - [x] P2-01 — Screenshot of the window/region for the card, reusing the `ScreenCapture` from P3-03 (dep: P3-03)
-- [ ] P2-02 — `AudioCapture` with circular buffer (PulseAudio/PipeWire) (dep: P1-01)
-- [ ] P2-03 — Audio trimming and encoding (ffmpeg or native crate; decide via ADR)
-- [ ] P2-04 — `CardBuilder` integration and `storeMediaFile` (dep: P2-01, P2-03)
+- [x] P2-02 — `AudioCapture` with circular buffer (PulseAudio/PipeWire) (dep: P1-01)
+- [x] P2-03 — Audio trimming and encoding (ffmpeg or native crate; decide via ADR)
+- [x] P2-04 — `CardBuilder` integration and `storeMediaFile` (dep: P2-01, P2-03)
 - [ ] P2-06 — Decide whether to offer speech recognition (e.g. Whisper) as an extra text source when no subtitles are on screen; record an ADR (not committed to the roadmap yet)
-- [ ] P2-05 — Unit/e2e tests with exact payloads
+- [x] P2-05 — Unit/e2e tests with exact payloads
 
 ## Phase 3 — Screen OCR with hover lookup (core, right after Phase 1)
 **Acceptance criteria:** with a fresh install and nothing else installed, pausing a video (YouTube, a desktop player, a game) and moving the mouse over a Japanese subtitle shows a popup next to the cursor with the word under the cursor (reading, meaning, dictionary form). No window or region has to be selected. Playing video is not supported: the user pauses it (ADR-011).

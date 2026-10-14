@@ -16,6 +16,7 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+use crate::audio::{AudioBuffer, AudioRecorder, BUFFER_SECONDS};
 use crate::capture::{Region, X11Capture};
 use crate::cards::CardInput;
 use crate::config::Config;
@@ -331,16 +332,30 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(RunningSources(Mutex::new(sources)));
     app.manage(MpvStatus(mpv_connection));
     app.manage(Arc::clone(&hover_control));
-    app.manage(AppState::new(
-        config,
-        dictionary,
-        Startup {
-            warnings,
-            websocket_port,
-            ocr_unavailable,
-        },
-        ocr_region,
-    ));
+    let audio = AudioBuffer::shared(BUFFER_SECONDS);
+    if config.audio_on_cards {
+        match AudioRecorder::start(Arc::clone(&audio)) {
+            Ok(recorder) => {
+                app.manage(recorder);
+            }
+            Err(error) => {
+                warnings.push(format!("Cards will have no audio: {error}"));
+            }
+        }
+    }
+    app.manage(
+        AppState::new(
+            config,
+            dictionary,
+            Startup {
+                warnings,
+                websocket_port,
+                ocr_unavailable,
+            },
+            ocr_region,
+        )
+        .with_audio(audio),
+    );
     start_hover(app, &hover_control, &tokenizer);
     Ok(())
 }

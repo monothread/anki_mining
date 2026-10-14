@@ -20,8 +20,13 @@ pub struct X11Capture {
 impl X11Capture {
     /// Connects to the display named by `$DISPLAY`.
     pub fn connect() -> Result<X11Capture, CaptureError> {
+        X11Capture::connect_to(None)
+    }
+
+    /// Connects to the named display (`None`: the one in `$DISPLAY`).
+    pub fn connect_to(display: Option<&str>) -> Result<X11Capture, CaptureError> {
         let (connection, screen_number) =
-            x11rb::connect(None).map_err(|error| CaptureError::Connection(error.to_string()))?;
+            x11rb::connect(display).map_err(|error| CaptureError::Connection(error.to_string()))?;
         let setup = connection.setup();
         let screen = setup
             .roots
@@ -303,17 +308,8 @@ mod tests {
     #[ignore = "needs an X11 display; run through `scripts/dev.sh test`"]
     fn connecting_fails_clearly_when_the_display_does_not_exist() {
         let _display = crate::x11_test_lock();
-        // SAFETY: tests that read DISPLAY are the ignored ones above, which run in a separate
-        // invocation per `--test-threads`; restoring the value keeps them unaffected.
-        let original = std::env::var("DISPLAY").ok();
-        std::env::set_var("DISPLAY", ":987");
+        let result = X11Capture::connect_to(Some(":987"));
 
-        let result = X11Capture::connect();
-
-        match original {
-            Some(value) => std::env::set_var("DISPLAY", value),
-            None => std::env::remove_var("DISPLAY"),
-        }
         assert!(matches!(result, Err(CaptureError::Connection(_))));
     }
 }

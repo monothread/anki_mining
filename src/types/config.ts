@@ -15,6 +15,10 @@ export interface Config {
     hoverEnabled: boolean;
     /** Whether cards get a screenshot of the window the word was found in. */
     screenshotOnCards: boolean;
+    /** Whether cards get the sentence audio (needs `parec`). */
+    audioOnCards: boolean;
+    /** The longest audio clip put on a card, in seconds. */
+    audioSeconds: number;
     defaultProfileId: string;
     profiles: Profile[];
 }

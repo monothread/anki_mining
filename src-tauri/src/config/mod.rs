@@ -57,6 +57,10 @@ pub struct Config {
     pub hover_enabled: bool,
     /// Whether cards get a screenshot of the window the word was found in.
     pub screenshot_on_cards: bool,
+    /// Whether cards get the sentence audio (needs `parec`, from PulseAudio or PipeWire).
+    pub audio_on_cards: bool,
+    /// The longest audio clip put on a card, in seconds.
+    pub audio_seconds: u32,
     pub default_profile_id: String,
     pub profiles: Vec<Profile>,
 }
@@ -73,6 +77,8 @@ impl Default for Config {
             hover_dwell_ms: DEFAULT_DWELL_MS,
             hover_enabled: true,
             screenshot_on_cards: true,
+            audio_on_cards: true,
+            audio_seconds: 8,
             default_profile_id: DEFAULT_PROFILE_ID.to_string(),
             profiles: vec![default_profile()],
         }
@@ -249,6 +255,8 @@ mod tests {
         assert_eq!(config.hover_dwell_ms, 300);
         assert!(config.hover_enabled);
         assert!(config.screenshot_on_cards);
+        assert!(config.audio_on_cards);
+        assert_eq!(config.audio_seconds, 8);
         assert_eq!(config.default_profile_id, "default");
         assert_eq!(config.profiles, vec![default_profile()]);
         assert_eq!(config.profiles[0].deck_name, "Mining");
@@ -269,6 +277,8 @@ mod tests {
         assert_eq!(value["hoverDwellMs"], json!(300));
         assert_eq!(value["hoverEnabled"], json!(true));
         assert_eq!(value["screenshotOnCards"], json!(true));
+        assert_eq!(value["audioOnCards"], json!(true));
+        assert_eq!(value["audioSeconds"], json!(8));
         assert_eq!(value["defaultProfileId"], json!("default"));
         assert_eq!(value["profiles"][0]["deckName"], json!("Mining"));
     }

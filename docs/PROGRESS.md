@@ -5,7 +5,7 @@
 **Last updated:** 2026-10-14
 **Version:** 0.1.0, first version published (hover lookup works on X11; Anki card creation deferred)
 **Current phase:** Phase 1 and Phase 3 done (hover lookup and a first Anki flow: add the word from the popup); Phase 2 (media) next
-**Next step:** media for the cards: screenshot of the window under the cursor (P2-01) and audio (P2-02..P2-04, with the exact subtitle timing from mpv in P4-03), then profiles, decks per source and duplicate handling (Phase 5). Also pending: try the Anki flow against a real Anki.
+**Next step:** Phase 5: profiles (deck/note type per source or application), field-mapping, duplicate handling (`canAddNotes` + policy), then Phase 6 (pitch accent, frequency, Yomitan dictionaries, packaging). Media on cards is done (screenshot, audio). Also pending: try the Anki flow against a real Anki.
 
 ## Status per phase
 
@@ -105,6 +105,7 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 | 2026-10-14 | `AnkiClient` (`src-tauri/src/anki/`): version, deckNames, modelNames, createModel, `ensure_model`, storeMediaFile, canAddNotes, addNote (duplicates rejected per deck), retries only on connection errors, error classification (`Duplicate`, `Api`, `Http`, `Connection`). Default "AnkiMining" note type in `anki/model.rs`. Tested against a scripted local HTTP server (`anki/test_support.rs`) that checks the exact JSON sent. 25 tests | P1-12 |
 | 2026-10-14 | Card builder (`cards/`), `text_offsets`, `Config.mining_hotkey`, app layer (`app/`: `AppState`, sentence `pipeline`, Tauri commands `get_status`, `scan_at`, `mine`, `import_dictionary`, `submit_text`, global shortcut event `mine-hotkey`) and frontend (`src/ui/`, `src/ipc/backend.ts`, `src/cards/`, styles). Frontend is a transparent always-on-top undecorated window. 230 Rust tests + 65 Vitest tests, tsc/eslint/clippy clean. NOT yet verified visually or end to end in the real app | (P1-10, P1-11, P1-13 pending visual check) |
 | 2026-10-14 | P2-01: cards get a JPEG screenshot (max 1280 px wide) of the window under the cursor, captured with the lookup; `screenshotOnCards` config. Browser extension dropped by user decision | — |
+| 2026-10-14 | P2-02..P2-05 sentence audio (ADR-007): `audio/` records the default output with `parec` into a 60 s buffer, cuts the last speech (silence trimmed) and encodes WAV; `audioOnCards`/`audioSeconds` config; `AppState::mine_from_hover` attaches it. The X11 tests no longer change `$DISPLAY` (they were flaky). 525 Rust tests | P2-02, P2-03, P2-04, P2-05 |
 
 ## Backlog (ideas outside the current scope)
 - Visual signal when a word is identified. Decided to leave it as is (the popup is the signal). The cursor shape cannot be changed over other apps' windows on X11; if wanted later, the clean option is a click-through highlight frame over the word, the alternatives (pointer grab, an input-capturing window) block clicks.
