@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use thiserror::Error;
@@ -11,7 +11,7 @@ use crate::anki::{default_mining_model, AnkiClient, AnkiError};
 use crate::audio::{audio_file, SharedAudio};
 use crate::capture::Region;
 use crate::cards::{build_note, CardInput, MediaFile};
-use crate::config::{Config, DuplicatePolicy, DEFAULT_MODEL_NAME};
+use crate::config::{Config, ConfigFile, DuplicatePolicy, MiningSettings, DEFAULT_MODEL_NAME};
 use crate::dictionary::{Dictionary, DictionaryError, ImportStats, ScanResult};
 use crate::hover::{card_input, HoverMemory};
 use crate::media::screenshot_file;
@@ -73,7 +73,7 @@ pub struct Startup {
 }
 
 pub struct AppState {
-    config: Config,
+    config: Arc<ConfigFile>,
     dictionary: Mutex<Dictionary>,
     anki: AnkiClient,
     startup: Startup,
@@ -91,7 +91,7 @@ impl AppState {
     ) -> AppState {
         let anki = AnkiClient::new(&config.anki_connect_url);
         AppState {
-            config,
+            config: Arc::new(ConfigFile::new(None, config)),
             dictionary: Mutex::new(dictionary),
             anki,
             startup,
@@ -101,6 +101,24 @@ impl AppState {
         }
     }
 
+    /// Shares the settings file with the other parts of the app, so every change is saved there.
+    pub fn with_config_file(mut self, file: Arc<ConfigFile>) -> AppState {
+        self.config = file;
+        self
+    }
+
+    /// The settings about cards.
+    pub fn settings(&self) -> MiningSettings {
+        MiningSettings::from_config(&self.config.get())
+    }
+
+    /// Replaces the settings about cards. Nothing changes when they are not valid.
+    pub fn save_settings(&self, settings: MiningSettings) -> Result<MiningSettings, String> {
+        self.config
+            .update_checked(|config| settings.apply_to(config))?;
+        Ok(self.settings())
+    }
+
     /// Gives the state the recorded sound that cards take their audio from.
     pub fn with_audio(mut self, audio: SharedAudio) -> AppState {
         self.audio = Some(audio);
@@ -108,7 +126,8 @@ impl AppState {
     }
 
     fn sentence_audio(&self) -> Option<MediaFile> {
-        if !self.config.audio_on_cards {
+        let config = self.config.get();
+        if !config.audio_on_cards {
             return None;
         }
         let clip = self
@@ -116,17 +135,18 @@ impl AppState {
             .as_ref()?
             .lock()
             .ok()?
-            .clip(self.config.audio_seconds as usize)?;
+            .clip(config.audio_seconds as usize)?;
         Some(audio_file(&clip, now_millis()))
     }
 
     pub fn status(&self) -> Result<Status, AppError> {
+        let config = self.config.get();
         Ok(Status {
             dictionary_entries: self.lock_dictionary()?.entry_count()?,
             warnings: self.startup.warnings.clone(),
-            mining_hotkey: self.config.mining_hotkey.clone(),
+            mining_hotkey: config.mining_hotkey,
             websocket_port: self.startup.websocket_port,
-            default_profile_id: self.config.default_profile_id.clone(),
+            default_profile_id: config.default_profile_id,
             ocr_available: self.startup.ocr_unavailable.is_none(),
             ocr_region: self.ocr_region.get(),
             mpv_connected: false,
@@ -160,23 +180,20 @@ impl AppState {
     /// Creates the card in the deck of the chosen profile (the default one when `None`) and
     /// returns the Anki note id. The default note type is created on first use.
     pub fn mine(&self, input: &CardInput, profile_id: Option<&str>) -> Result<u64, AppError> {
+        let config = self.config.get();
         let profile = match profile_id {
-            Some(id) => self.config.profile(id),
-            None => self.config.default_profile(),
+            Some(id) => config.profile(id),
+            None => config.default_profile(),
         }
         .ok_or_else(|| {
-            AppError::UnknownProfile(
-                profile_id
-                    .unwrap_or(&self.config.default_profile_id)
-                    .to_string(),
-            )
+            AppError::UnknownProfile(profile_id.unwrap_or(&config.default_profile_id).to_string())
         })?;
 
         if profile.model_name == DEFAULT_MODEL_NAME && !self.model_ready.load(Ordering::SeqCst) {
             self.anki.ensure_model(&default_mining_model())?;
             self.model_ready.store(true, Ordering::SeqCst);
         }
-        let allow_duplicate = self.config.duplicate_policy == DuplicatePolicy::Allow;
+        let allow_duplicate = config.duplicate_policy == DuplicatePolicy::Allow;
         Ok(self
             .anki
             .add_note_with(&build_note(profile, input), allow_duplicate)?)
@@ -194,7 +211,8 @@ impl AppState {
             .get()
             .and_then(|result| card_input(&result, result_index, entry_index))
             .ok_or(AppError::NothingToMine)?;
-        if self.config.screenshot_on_cards {
+        let config = self.config.get();
+        if config.screenshot_on_cards {
             input.picture = memory
                 .screenshot()
                 .and_then(|image| screenshot_file(&image, now_millis()).ok());
@@ -206,12 +224,8 @@ impl AppState {
             app_name: identity.app_name,
             window_title: identity.title,
         };
-        let profile_id = resolve(
-            &self.config.profiles,
-            &self.config.default_profile_id,
-            &origin,
-        )
-        .map(|profile| profile.id.clone());
+        let profile_id = resolve(&config.profiles, &config.default_profile_id, &origin)
+            .map(|profile| profile.id.clone());
         self.mine(&input, profile_id.as_deref())
     }
 
@@ -1036,6 +1050,62 @@ mod tests {
         assert_eq!(
             note_options(DuplicatePolicy::Allow),
             json!({ "allowDuplicate": true, "duplicateScope": "deck" })
+        );
+    }
+
+    #[test]
+    fn the_settings_start_as_the_config_and_can_be_replaced() {
+        let state = state_with(Config::default());
+        let mut settings = state.settings();
+        assert_eq!(settings, MiningSettings::from_config(&Config::default()));
+
+        settings
+            .profiles
+            .push(profile_for("player", "Anime", Some("mpv"), None));
+        settings.audio_seconds = 4;
+        settings.duplicate_policy = DuplicatePolicy::Allow;
+        let saved = state.save_settings(settings.clone()).expect("saved");
+
+        assert_eq!(saved, settings);
+        assert_eq!(state.settings(), settings);
+    }
+
+    #[test]
+    fn invalid_settings_are_refused_and_the_old_ones_stay() {
+        let state = state_with(Config::default());
+        let mut settings = state.settings();
+        settings.default_profile_id = "missing".to_string();
+
+        let error = state.save_settings(settings).expect_err("must fail");
+
+        assert!(
+            error.contains("defaultProfileId `missing` does not match any profile"),
+            "{error}"
+        );
+        assert_eq!(
+            state.settings(),
+            MiningSettings::from_config(&Config::default())
+        );
+    }
+
+    #[test]
+    fn new_settings_apply_to_the_next_card() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+        let state = state_with(Config {
+            anki_connect_url: mock.url.clone(),
+            ..Config::default()
+        });
+        let mut settings = state.settings();
+        settings.profiles[0].deck_name = "Renamed".to_string();
+        state.save_settings(settings).expect("saved");
+        let memory = HoverMemory::default();
+        remembered(&memory);
+
+        state.mine_from_hover(&memory, 0, 0).expect("note");
+
+        assert_eq!(
+            mock.requests()[1]["params"]["note"]["deckName"],
+            json!("Renamed")
         );
     }
 }

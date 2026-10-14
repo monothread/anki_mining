@@ -4,6 +4,10 @@ use std::io;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+
+mod file;
+
+pub use file::ConfigFile;
 use thiserror::Error;
 
 use crate::hover::trigger::{TriggerKey, TriggerMode, DEFAULT_DWELL_MS};
@@ -85,6 +89,40 @@ impl Default for Config {
             default_profile_id: DEFAULT_PROFILE_ID.to_string(),
             profiles: vec![default_profile()],
         }
+    }
+}
+
+/// The settings about cards that can be changed while the app runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MiningSettings {
+    pub default_profile_id: String,
+    pub profiles: Vec<Profile>,
+    pub screenshot_on_cards: bool,
+    pub audio_on_cards: bool,
+    pub audio_seconds: u32,
+    pub duplicate_policy: DuplicatePolicy,
+}
+
+impl MiningSettings {
+    pub fn from_config(config: &Config) -> MiningSettings {
+        MiningSettings {
+            default_profile_id: config.default_profile_id.clone(),
+            profiles: config.profiles.clone(),
+            screenshot_on_cards: config.screenshot_on_cards,
+            audio_on_cards: config.audio_on_cards,
+            audio_seconds: config.audio_seconds,
+            duplicate_policy: config.duplicate_policy,
+        }
+    }
+
+    pub fn apply_to(self, config: &mut Config) {
+        config.default_profile_id = self.default_profile_id;
+        config.profiles = self.profiles;
+        config.screenshot_on_cards = self.screenshot_on_cards;
+        config.audio_on_cards = self.audio_on_cards;
+        config.audio_seconds = self.audio_seconds;
+        config.duplicate_policy = self.duplicate_policy;
     }
 }
 
@@ -681,5 +719,25 @@ mod tests {
         fs::write(&path, r#"{ "mpvSocket": "/tmp/other" }"#).expect("write");
 
         assert_eq!(Config::load(&path).expect("load").mpv_socket, "/tmp/other");
+    }
+
+    #[test]
+    fn mining_settings_round_trip_through_the_config_with_camel_case_keys() {
+        let mut config = Config::default();
+        let mut settings = MiningSettings::from_config(&config);
+        settings.audio_seconds = 3;
+        settings.duplicate_policy = DuplicatePolicy::Allow;
+        settings.screenshot_on_cards = false;
+
+        settings.clone().apply_to(&mut config);
+
+        assert_eq!(MiningSettings::from_config(&config), settings);
+        assert_eq!(config.audio_seconds, 3);
+        let value = serde_json::to_value(&settings).expect("json");
+        assert_eq!(value["audioSeconds"], json!(3));
+        assert_eq!(value["duplicatePolicy"], json!("allow"));
+        assert_eq!(value["screenshotOnCards"], json!(false));
+        assert_eq!(value["defaultProfileId"], json!("default"));
+        assert_eq!(value["profiles"][0]["match"]["windowTitle"], json!(null));
     }
 }

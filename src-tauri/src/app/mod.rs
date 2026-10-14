@@ -19,7 +19,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use crate::audio::{AudioBuffer, AudioRecorder, BUFFER_SECONDS};
 use crate::capture::{Region, X11Capture};
 use crate::cards::CardInput;
-use crate::config::Config;
+use crate::config::{Config, ConfigFile, MiningSettings};
 use crate::dictionary::{Dictionary, ImportStats, ScanResult};
 use crate::hover::trigger::TriggerMode;
 use crate::hover::{card_input, HoverMemory};
@@ -80,6 +80,19 @@ fn set_hover_mode(
 ) -> HoverStatus {
     report_save_error(&app, control.set_mode(mode));
     control.status()
+}
+
+#[tauri::command]
+fn get_settings(state: State<'_, AppState>) -> MiningSettings {
+    state.settings()
+}
+
+#[tauri::command]
+fn save_settings(
+    state: State<'_, AppState>,
+    settings: MiningSettings,
+) -> Result<MiningSettings, String> {
+    state.save_settings(settings)
 }
 
 #[tauri::command]
@@ -286,6 +299,8 @@ pub fn run() -> tauri::Result<()> {
             mine_hover,
             set_hover_mode,
             set_hover_enabled,
+            get_settings,
+            save_settings,
             set_ocr_region,
             cancel_region_selection,
             open_region_selector
@@ -323,9 +338,11 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     // A settings file that could not be read is never overwritten by a change made in the app.
     let mut control = HoverControl::new(&config);
-    if config_loaded {
-        control = control.with_persistence(&config_path, config.clone());
-    }
+    let config_file = Arc::new(ConfigFile::new(
+        config_loaded.then_some(config_path),
+        config.clone(),
+    ));
+    control = control.with_config_file(Arc::clone(&config_file));
     let hover_control = Arc::new(control);
     spawn_pipeline(app.clone(), receiver, Arc::clone(&tokenizer));
     app.manage(TextSink(sender));
@@ -354,6 +371,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             },
             ocr_region,
         )
+        .with_config_file(config_file)
         .with_audio(audio),
     );
     start_hover(app, &hover_control, &tokenizer);

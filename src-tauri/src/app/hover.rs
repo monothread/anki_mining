@@ -12,7 +12,7 @@ use tauri::{
 };
 
 use crate::capture::{Region, ScreenCapture, X11Capture};
-use crate::config::Config;
+use crate::config::{Config, ConfigFile};
 use crate::hover::placement::{popup_position, popup_position_beside, Rect};
 use crate::hover::trigger::{PointerSample, Trigger, TriggerKey, TriggerMode};
 use crate::hover::{lookup_in, HoverMemory, LookupOutcome};
@@ -49,19 +49,13 @@ pub struct HoverStatus {
     pub dwell_ms: u64,
 }
 
-/// Where changes made while the app runs are saved, and the settings they are merged into.
-struct ConfigStore {
-    path: PathBuf,
-    config: Mutex<Config>,
-}
-
 /// Shared between the hover thread and the commands that change its behavior.
 pub struct HoverControl {
     enabled: AtomicBool,
     trigger: Mutex<Trigger>,
     key: TriggerKey,
     dwell_ms: u64,
-    store: Option<ConfigStore>,
+    store: Option<Arc<ConfigFile>>,
 }
 
 impl HoverControl {
@@ -78,10 +72,13 @@ impl HoverControl {
     /// Saves every later change to `path`, merged into `config` (the settings the app started
     /// with), so the choice survives a restart.
     pub fn with_persistence(mut self, path: &Path, config: Config) -> HoverControl {
-        self.store = Some(ConfigStore {
-            path: path.to_path_buf(),
-            config: Mutex::new(config),
-        });
+        self.store = Some(Arc::new(ConfigFile::new(Some(path.to_path_buf()), config)));
+        self
+    }
+
+    /// Saves every later change through `file`, which other parts of the app share.
+    pub fn with_config_file(mut self, file: Arc<ConfigFile>) -> HoverControl {
+        self.store = Some(file);
         self
     }
 
@@ -125,17 +122,10 @@ impl HoverControl {
     }
 
     fn persist(&self, change: impl FnOnce(&mut Config)) -> Result<(), String> {
-        let Some(store) = &self.store else {
-            return Ok(());
-        };
-        let mut config = store
-            .config
-            .lock()
-            .map_err(|_| "the settings are unavailable".to_string())?;
-        change(&mut config);
-        config
-            .save(&store.path)
-            .map_err(|error| format!("Could not save the setting: {error}"))
+        match &self.store {
+            Some(store) => store.update(change),
+            None => Ok(()),
+        }
     }
 
     /// Feeds a pointer reading to the trigger.
