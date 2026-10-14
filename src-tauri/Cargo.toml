@@ -24,7 +24,8 @@ tungstenite = "0.30"
 arboard = { version = "3", default-features = false }
 regex = "1"
 x11rb = "0.13"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+base64 = "0.22"
 ort = { version = "=2.0.0-rc.14", default-features = false, features = ["std", "load-dynamic", "api-31"] }
 ureq = { version = "3", default-features = false, features = ["json"] }
 unicode-normalization = "0.1"

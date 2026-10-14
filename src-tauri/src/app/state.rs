@@ -13,6 +13,8 @@ use crate::cards::{build_note, CardInput};
 use crate::config::{Config, DEFAULT_MODEL_NAME};
 use crate::dictionary::{Dictionary, DictionaryError, ImportStats, ScanResult};
 use crate::hover::{card_input, HoverMemory};
+use crate::media::screenshot_file;
+use crate::sources::now_millis;
 use crate::sources::ocr::RegionHandle;
 use crate::text_offsets::utf16_offset_to_byte;
 
@@ -162,10 +164,15 @@ impl AppState {
         result_index: usize,
         entry_index: usize,
     ) -> Result<u64, AppError> {
-        let input = memory
+        let mut input = memory
             .get()
             .and_then(|result| card_input(&result, result_index, entry_index))
             .ok_or(AppError::NothingToMine)?;
+        if self.config.screenshot_on_cards {
+            input.picture = memory
+                .screenshot()
+                .and_then(|image| screenshot_file(&image, now_millis()).ok());
+        }
         self.mine(&input, None)
     }
 
@@ -748,5 +755,62 @@ mod tests {
         let error = state.mine_from_hover(&memory, 0, 0).expect_err("must fail");
 
         assert!(matches!(error, AppError::Anki(AnkiError::Duplicate)));
+    }
+
+    #[test]
+    fn the_card_gets_the_screenshot_of_the_window_as_a_jpeg() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+        let state = state_for(&mock);
+        let memory = HoverMemory::default();
+        remembered(&memory);
+        let window = image::RgbImage::from_pixel(400, 225, image::Rgb([30, 120, 200]));
+        memory.set_with_screenshot(memory.get().expect("remembered"), Some(window));
+
+        state.mine_from_hover(&memory, 0, 0).expect("note");
+
+        let picture = &mock.requests()[1]["params"]["note"]["picture"];
+        assert_eq!(picture.as_array().map(Vec::len), Some(1));
+        let filename = picture[0]["filename"].as_str().expect("filename");
+        assert!(
+            filename.starts_with("anki-mining-") && filename.ends_with(".jpg"),
+            "{filename}"
+        );
+        assert_eq!(picture[0]["fields"], json!(["Picture"]));
+        let bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            picture[0]["data"].as_str().expect("data"),
+        )
+        .expect("base64");
+        assert_eq!(&bytes[..3], &[0xFF, 0xD8, 0xFF]);
+    }
+
+    #[test]
+    fn no_picture_is_sent_when_there_is_no_screenshot() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+        let state = state_for(&mock);
+        let memory = HoverMemory::default();
+        remembered(&memory);
+
+        state.mine_from_hover(&memory, 0, 0).expect("note");
+
+        assert_eq!(mock.requests()[1]["params"]["note"].get("picture"), None);
+    }
+
+    #[test]
+    fn the_screenshot_can_be_turned_off_in_the_config() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+        let state = state_with(Config {
+            anki_connect_url: mock.url.clone(),
+            screenshot_on_cards: false,
+            ..Config::default()
+        });
+        let memory = HoverMemory::default();
+        remembered(&memory);
+        let window = image::RgbImage::from_pixel(100, 100, image::Rgb([1, 2, 3]));
+        memory.set_with_screenshot(memory.get().expect("remembered"), Some(window));
+
+        state.mine_from_hover(&memory, 0, 0).expect("note");
+
+        assert_eq!(mock.requests()[1]["params"]["note"].get("picture"), None);
     }
 }

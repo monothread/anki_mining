@@ -27,7 +27,7 @@ The product must work after installing a single app, with no browser extension o
 
 ## Phase 2 — Media on cards
 **Acceptance criteria:** the card automatically includes a screenshot and the sentence audio (last N seconds). Starts after Phase 3.
-- [ ] P2-01 — Screenshot of the window/region for the card, reusing the `ScreenCapture` from P3-03 (dep: P3-03)
+- [x] P2-01 — Screenshot of the window/region for the card, reusing the `ScreenCapture` from P3-03 (dep: P3-03)
 - [ ] P2-02 — `AudioCapture` with circular buffer (PulseAudio/PipeWire) (dep: P1-01)
 - [ ] P2-03 — Audio trimming and encoding (ffmpeg or native crate; decide via ADR)
 - [ ] P2-04 — `CardBuilder` integration and `storeMediaFile` (dep: P2-01, P2-03)
@@ -53,12 +53,12 @@ The product must work after installing a single app, with no browser extension o
 - [x] P3-15 — Vertical text (games, manga): port the vertical recognition model of MeikiOCR (beta quality, see PROGRESS)
 - [ ] P3-16 — Visual signal on the word when it is identified (click-through highlight frame); decided to skip for now, see PROGRESS backlog
 
-## Phase 4 — Exact-text sources (mpv and optional browser extension)
-**Acceptance criteria:** mpv subtitles appear in the overlay with timestamps and cards use the exact clip. The browser extension is optional: the app must be fully usable without it.
+## Phase 4 — Exact-text sources (mpv)
+**Acceptance criteria:** mpv subtitles appear in the overlay with timestamps and cards use the exact clip. There is no browser extension (user decision).
 - [x] P4-02 — `MpvSource` via IPC socket (exact subtitle text, no OCR)
 - [ ] P4-03 — Sync audio trimming with subtitle timestamps
 - [ ] P4-05 — Evaluate AT-SPI (accessibility) as a text source for apps that expose text; keep only if coverage is useful
-- [ ] P4-01 — (optional) Browser extension (subtitles + video time) sending to `WebSocketSource`, for users who want exact text and timestamps on YouTube/streaming
+- [-] P4-01 — Browser extension: dropped by user decision (the app works without one)
 - [ ] P4-04 — Tests and documentation
 
 ## Phase 5 — Profiles and decks per source

@@ -5,6 +5,7 @@ pub mod cards;
 pub mod config;
 pub mod dictionary;
 pub mod hover;
+pub mod media;
 pub mod normalizer;
 pub mod ocr;
 pub mod pointer;

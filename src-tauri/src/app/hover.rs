@@ -11,15 +11,17 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
 };
 
-use crate::capture::{ScreenCapture, X11Capture};
+use crate::capture::{Region, ScreenCapture, X11Capture};
 use crate::config::Config;
 use crate::hover::placement::{popup_position, popup_position_beside, Rect};
 use crate::hover::trigger::{PointerSample, Trigger, TriggerKey, TriggerMode};
-use crate::hover::{lookup_at, HoverMemory, LookupOutcome};
+use crate::hover::{lookup_in, HoverMemory, LookupOutcome};
+use crate::media::crop_to_region;
 use crate::ocr::{MeikiEngine, OcrEngine};
 use crate::pointer::{PointerTracker, X11Pointer};
 use crate::sources::now_millis;
 use crate::tokenizer::Tokenizer;
+use image::RgbImage;
 
 use super::state::AppState;
 
@@ -251,7 +253,8 @@ fn watch(
             hide_popup(app);
             thread::sleep(HIDE_SETTLE);
         }
-        shown = look_up(app, tokenizer, &mut capture, &mut engine, cursor);
+        let window = pointer.window_under_pointer().ok().flatten();
+        shown = look_up(app, tokenizer, &mut capture, &mut engine, cursor, window);
     }
 }
 
@@ -261,22 +264,43 @@ fn look_up(
     capture: &mut X11Capture,
     engine: &mut MeikiEngine,
     cursor: (i32, i32),
+    window: Option<Region>,
 ) -> Option<Shown> {
     let scan = |sentence: &str, start: usize| {
         app.state::<AppState>()
             .scan_at(sentence, start)
             .map_err(|error| error.to_string())
     };
-    let outcome = lookup_at(
-        capture as &mut dyn ScreenCapture,
+    let (screen_width, screen_height) = capture.screen_size();
+    let screen = match capture.capture(Region {
+        x: 0,
+        y: 0,
+        width: screen_width,
+        height: screen_height,
+    }) {
+        Ok(screen) => screen,
+        Err(error) => {
+            let _ = app.emit(INFO_EVENT, error.to_string());
+            return None;
+        }
+    };
+    let outcome = lookup_in(
+        &screen,
         engine as &mut dyn OcrEngine,
         tokenizer,
         &scan,
         cursor,
     );
+    // Over the bare desktop there is no window to crop to, so the picture is the whole screen.
+    let picture_area = window.unwrap_or(Region {
+        x: 0,
+        y: 0,
+        width: screen_width,
+        height: screen_height,
+    });
+    let screenshot = crop_to_region(&screen, picture_area);
     match outcome {
         Ok(LookupOutcome::Found(result)) if !result.results.is_empty() => {
-            let (screen_width, screen_height) = capture.screen_size();
             let (screen_width, screen_height) = (screen_width as i32, screen_height as i32);
             let (x, y) = if result.vertical {
                 popup_position_beside(
@@ -310,7 +334,7 @@ fn look_up(
                 width: right - left,
                 height: bottom - top,
             };
-            show_popup(app, popup, &result);
+            show_popup(app, popup, &result, screenshot);
             Some(Shown {
                 keep: [popup.grow(KEEP_MARGIN), line.grow(KEEP_MARGIN)],
                 popup,
@@ -348,7 +372,12 @@ fn is_over_app_window(app: &AppHandle, cursor: (i32, i32)) -> bool {
     })
 }
 
-fn show_popup(app: &AppHandle, popup: Rect, result: &crate::hover::HoverResult) {
+fn show_popup(
+    app: &AppHandle,
+    popup: Rect,
+    result: &crate::hover::HoverResult,
+    screenshot: Option<RgbImage>,
+) {
     let Some(window) = app.get_webview_window(POPUP_LABEL) else {
         return;
     };
@@ -356,7 +385,7 @@ fn show_popup(app: &AppHandle, popup: Rect, result: &crate::hover::HoverResult) 
     let _ = window.set_position(PhysicalPosition::new(popup.x, popup.y));
     let _ = app.emit_to(POPUP_LABEL, RESULT_EVENT, result);
     if let Some(memory) = app.try_state::<HoverMemory>() {
-        memory.set(result.clone());
+        memory.set_with_screenshot(result.clone(), screenshot);
     }
     let _ = window.show();
 }

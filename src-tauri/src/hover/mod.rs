@@ -6,6 +6,7 @@ pub mod trigger;
 
 use std::sync::Mutex;
 
+use image::RgbImage;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -32,14 +33,26 @@ pub enum HoverError {
 /// Source recorded on the cards made from a hover lookup.
 pub const CARD_SOURCE: &str = "screen";
 
+/// What the popup shows right now, kept so that it can be added to Anki.
+#[derive(Debug)]
+struct Remembered {
+    result: HoverResult,
+    /// The window the word was found in, as it looked at that moment.
+    screenshot: Option<RgbImage>,
+}
+
 /// The word of the last lookup that was shown, kept so that it can be added to Anki.
 #[derive(Debug, Default)]
-pub struct HoverMemory(Mutex<Option<HoverResult>>);
+pub struct HoverMemory(Mutex<Option<Remembered>>);
 
 impl HoverMemory {
     pub fn set(&self, result: HoverResult) {
+        self.set_with_screenshot(result, None);
+    }
+
+    pub fn set_with_screenshot(&self, result: HoverResult, screenshot: Option<RgbImage>) {
         if let Ok(mut current) = self.0.lock() {
-            *current = Some(result);
+            *current = Some(Remembered { result, screenshot });
         }
     }
 
@@ -50,7 +63,18 @@ impl HoverMemory {
     }
 
     pub fn get(&self) -> Option<HoverResult> {
-        self.0.lock().ok().and_then(|current| current.clone())
+        self.0
+            .lock()
+            .ok()
+            .and_then(|current| current.as_ref().map(|remembered| remembered.result.clone()))
+    }
+
+    pub fn screenshot(&self) -> Option<RgbImage> {
+        self.0.lock().ok().and_then(|current| {
+            current
+                .as_ref()
+                .and_then(|remembered| remembered.screenshot.clone())
+        })
     }
 }
 
@@ -150,7 +174,7 @@ fn char_index(text: &str, utf16_offset: usize) -> usize {
     text.chars().count()
 }
 
-/// Reads the screen around `cursor` and finds the dictionary entries for the word under it.
+/// Reads the whole screen and finds the dictionary entries for the word under `cursor`.
 ///
 /// `scan` looks a sentence up from a UTF-16 offset (see `AppState::scan_at`).
 pub fn lookup_at(
@@ -167,7 +191,18 @@ pub fn lookup_at(
         width,
         height,
     })?;
-    let lines = engine.recognize_near(&screen, cursor)?;
+    lookup_in(&screen, engine, tokenizer, scan, cursor)
+}
+
+/// Finds the dictionary entries for the word under `cursor` in an image of the whole screen.
+pub fn lookup_in(
+    screen: &RgbImage,
+    engine: &mut dyn OcrEngine,
+    tokenizer: &Tokenizer,
+    scan: &SentenceScan,
+    cursor: (i32, i32),
+) -> Result<LookupOutcome, HoverError> {
+    let lines = engine.recognize_near(screen, cursor)?;
 
     let Some(hit) = character_at(&lines, cursor) else {
         return Ok(LookupOutcome::NoText { lines: lines.len() });
@@ -804,5 +839,45 @@ mod tests {
 
         memory.clear();
         assert_eq!(memory.get(), None);
+    }
+
+    #[test]
+    fn the_memory_keeps_the_screenshot_with_the_word_and_drops_it_together() {
+        let memory = HoverMemory::default();
+        assert!(memory.screenshot().is_none());
+
+        memory.set(two_entry_result());
+        assert!(memory.screenshot().is_none());
+
+        let window = RgbImage::from_pixel(8, 4, Rgb([9, 9, 9]));
+        memory.set_with_screenshot(two_entry_result(), Some(window.clone()));
+        assert_eq!(memory.screenshot(), Some(window));
+        assert_eq!(memory.get(), Some(two_entry_result()));
+
+        memory.clear();
+        assert!(memory.screenshot().is_none());
+    }
+
+    #[test]
+    fn lookup_in_gives_the_same_answer_as_lookup_at_for_the_same_screen() {
+        let screen_image = screen_with_subtitle();
+        let mut engine = real_engine();
+        let tokenizer = Tokenizer::new().expect("tokenizer");
+        let scan = dictionary_scan();
+        let lines = engine.recognize(&screen_image).expect("ocr");
+        let cursor = center(lines[0].chars[3].bbox);
+
+        let direct = lookup_in(&screen_image, &mut engine, &tokenizer, &scan, cursor).expect("in");
+        let through_capture = lookup_at(
+            &mut FakeScreen(screen_image.clone()),
+            &mut engine,
+            &tokenizer,
+            &scan,
+            cursor,
+        )
+        .expect("at");
+
+        assert_eq!(direct, through_capture);
+        assert_eq!(found(direct).results[0].source, "友達");
     }
 }

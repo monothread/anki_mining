@@ -14,7 +14,7 @@
 | 1 | MVP: clipboard/websocket → popup → Anki | Done (the Anki flow is tested against a mock AnkiConnect, never tried against a real Anki) |
 | 2 | Media on cards (audio + screenshot) — after Phase 3 | Not started |
 | 3 | Screen OCR + hover lookup (core) | First version done and verified on the real desktop (YouTube, TV banner) and headless; P3-05 (preprocessing) open and optional |
-| 4 | mpv and optional browser extension | In progress (P4-02 done) |
+| 4 | mpv exact subtitles (no browser extension, user decision) | In progress (P4-02 done) |
 | 5 | Profiles and decks per source | Not started |
 | 6 | Polish (pitch, frequency, packaging) | Not started |
 
@@ -31,11 +31,11 @@ Anki integration comes last. The focus is recognizing Japanese words correctly i
 Move the mouse over a subtitle anywhere on screen and a popup shows the word. Triggers: hold a key (default Shift) or auto when the cursor is still for ~300 ms, switchable. The user pauses the video first. Region selection stays as an optional mode.
 
 ## Product goal
-Install one app and it works for everything, with no browser extension and no external tools. Screen OCR (Phase 3) is the core source; the browser extension is optional (ADR-010).
+Install one app and it works for everything, with no browser extension and no external tools. Screen OCR (Phase 3) is the core source. The browser extension was dropped by user decision (ADR-010).
 
 ## Decisions already made (summary; details in 04-decisions.md)
 - Native desktop app (not an extension hub); Tauri (Rust) + vanilla TypeScript; Docker for build/tests, AppImage for distribution.
-- OCR of the screen is the core source, bundled and offline (MeikiOCR ported to Rust, ONNX Runtime loaded at run time); the browser extension is optional.
+- OCR of the screen is the core source, bundled and offline (MeikiOCR ported to Rust, ONNX Runtime loaded at run time).
 - Hover over the text is the main interaction: hold a key or let the cursor rest, the user pauses the video (ADR-011).
 - X11 first; Wayland later through abstract interfaces.
 - Anki integration last; own "AnkiMining" note type created through AnkiConnect.
@@ -70,7 +70,7 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 - Grammar patterns that span several words (e.g. `なければならない`, `ざるを得ない`) are not handled; only single-word inflection chains.
 - Noun + する (勉強して) resolves to the noun 勉強 via `scan`, not to a `勉強する` entry (JMdict has no such headword).
 
-- The websocket server accepts any local client (no Origin check), so a web page open in the browser could push text into the app. Low impact (text only) but consider an allowlist/token when the extension (P4-01) exists.
+- The websocket server accepts any local client (no Origin check), so a web page open in the browser could push text into the app. Low impact (text only) but consider an allowlist/token.
 
 ## Test status (version 0.1.0)
 392 Rust tests (8 need a display and run under xvfb via `scripts/dev.sh test`) and 112 Vitest tests; `tsc`, eslint (0 warnings), `cargo clippy -D warnings` and `cargo fmt` clean. OCR accuracy: 99.9% characters on 350 degraded synthetic subtitle bands (45 ms/image), 99.6% on 60-110 character lines. Real-screen checks: YouTube burned-in subtitle (clean), YouTube caption box over another subtitle (word right, sentence noisy), TV news banner (word right, one kanji misread).
@@ -104,6 +104,7 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 | 2026-10-14 | `Normalizer` (`src-tauri/src/normalizer/`): strips ruby/HTML/ASS markup, bracketed readings after kanji, NFKC, joins lines inside Japanese text, drops text without Japanese, debounces identical text (1 s, by event timestamp). 26 tests | P1-09 |
 | 2026-10-14 | `AnkiClient` (`src-tauri/src/anki/`): version, deckNames, modelNames, createModel, `ensure_model`, storeMediaFile, canAddNotes, addNote (duplicates rejected per deck), retries only on connection errors, error classification (`Duplicate`, `Api`, `Http`, `Connection`). Default "AnkiMining" note type in `anki/model.rs`. Tested against a scripted local HTTP server (`anki/test_support.rs`) that checks the exact JSON sent. 25 tests | P1-12 |
 | 2026-10-14 | Card builder (`cards/`), `text_offsets`, `Config.mining_hotkey`, app layer (`app/`: `AppState`, sentence `pipeline`, Tauri commands `get_status`, `scan_at`, `mine`, `import_dictionary`, `submit_text`, global shortcut event `mine-hotkey`) and frontend (`src/ui/`, `src/ipc/backend.ts`, `src/cards/`, styles). Frontend is a transparent always-on-top undecorated window. 230 Rust tests + 65 Vitest tests, tsc/eslint/clippy clean. NOT yet verified visually or end to end in the real app | (P1-10, P1-11, P1-13 pending visual check) |
+| 2026-10-14 | P2-01: cards get a JPEG screenshot (max 1280 px wide) of the window under the cursor, captured with the lookup; `screenshotOnCards` config. Browser extension dropped by user decision | — |
 
 ## Backlog (ideas outside the current scope)
 - Visual signal when a word is identified. Decided to leave it as is (the popup is the signal). The cursor shape cannot be changed over other apps' windows on X11; if wanted later, the clean option is a click-through highlight frame over the word, the alternatives (pointer grab, an input-capturing window) block clicks.

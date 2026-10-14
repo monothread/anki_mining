@@ -5,6 +5,7 @@ pub mod x11;
 
 use thiserror::Error;
 
+use crate::capture::Region;
 use crate::hover::trigger::TriggerKey;
 
 pub use x11::X11Pointer;
@@ -39,6 +40,12 @@ impl PointerReading {
 
 pub trait PointerTracker {
     fn read(&mut self) -> Result<PointerReading, PointerError>;
+
+    /// The top-level window under the pointer (frame included), in screen pixels; `None` over
+    /// the bare desktop or when the backend cannot tell.
+    fn window_under_pointer(&mut self) -> Result<Option<Region>, PointerError> {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
