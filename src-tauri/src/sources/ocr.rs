@@ -293,6 +293,7 @@ mod tests {
             text: text.to_string(),
             bbox: [0, 0, 10, 10],
             chars: vec![],
+            vertical: false,
         }]
     }
 

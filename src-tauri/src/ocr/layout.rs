@@ -1,4 +1,5 @@
-//! Which detected lines belong to the same block of text (a two-line subtitle, a paragraph).
+//! Which detected lines belong to the same block of text (a two-line subtitle, a paragraph, a set
+//! of vertical columns).
 
 /// A block never has more lines than this: enough for a subtitle, short for a long paragraph.
 pub const MAX_BLOCK_LINES: usize = 3;
@@ -13,9 +14,34 @@ const MAX_OVERLAP_HEIGHTS: f32 = 0.3;
 /// Stacked lines share at least this part of the shorter line's width.
 const MIN_HORIZONTAL_OVERLAP: f32 = 0.3;
 
-/// Whether two line boxes (`[x1, y1, x2, y2]`) are stacked lines of the same block: similar
-/// height, close one above the other and overlapping horizontally.
+/// A box is a vertical column only when it is clearly taller than wide: this many fifths taller.
+/// A single character is nearly square and is read as a normal line.
+const VERTICAL_RATIO_NUMERATOR: i32 = 5;
+const VERTICAL_RATIO_DENOMINATOR: i32 = 4;
+
+/// Whether a box (`[x1, y1, x2, y2]`) is a vertical column of text.
+pub fn is_vertical(bbox: [i32; 4]) -> bool {
+    let (width, height) = (bbox[2] - bbox[0], bbox[3] - bbox[1]);
+    height * VERTICAL_RATIO_DENOMINATOR > width * VERTICAL_RATIO_NUMERATOR
+}
+
+/// The box with its axes swapped, so vertical columns can be compared like stacked lines.
+fn transposed(bbox: [i32; 4]) -> [i32; 4] {
+    [bbox[1], bbox[0], bbox[3], bbox[2]]
+}
+
+/// Whether two boxes (`[x1, y1, x2, y2]`) belong to the same block: stacked lines (similar
+/// height, close one above the other, overlapping horizontally) or neighbouring vertical columns
+/// (similar width, close side by side, overlapping vertically). A line and a column never do.
 pub fn same_block(a: [i32; 4], b: [i32; 4]) -> bool {
+    match (is_vertical(a), is_vertical(b)) {
+        (false, false) => same_stacked_block(a, b),
+        (true, true) => same_stacked_block(transposed(a), transposed(b)),
+        _ => false,
+    }
+}
+
+fn same_stacked_block(a: [i32; 4], b: [i32; 4]) -> bool {
     let (height_a, height_b) = (a[3] - a[1], b[3] - b[1]);
     let (width_a, width_b) = (a[2] - a[0], b[2] - b[0]);
     if height_a <= 0 || height_b <= 0 || width_a <= 0 || width_b <= 0 {
@@ -39,22 +65,24 @@ pub fn same_block(a: [i32; 4], b: [i32; 4]) -> bool {
     overlap >= width_a.min(width_b) as f32 * MIN_HORIZONTAL_OVERLAP
 }
 
-/// The indices of the block that contains `boxes[index]`, from top to bottom: the line itself
-/// plus its stacked neighbours, at most [`MAX_BLOCK_LINES`] lines (one above and one below first).
+/// The indices of the block that contains `boxes[index]`, in reading order: lines from top to
+/// bottom, vertical columns from right to left. The line itself plus its neighbours, at most
+/// [`MAX_BLOCK_LINES`] (one on each side first).
 pub fn block_around(boxes: &[[i32; 4]], index: usize) -> Vec<usize> {
+    let vertical = is_vertical(boxes[index]);
     let mut block = vec![index];
     while block.len() < MAX_BLOCK_LINES {
         let before = block.len();
-        let top = block[0];
-        if let Some(above) = neighbour(boxes, top, &block, Side::Above) {
-            block.insert(0, above);
+        let first = block[0];
+        if let Some(previous) = neighbour(boxes, first, &block, Side::Before, vertical) {
+            block.insert(0, previous);
         }
         if block.len() >= MAX_BLOCK_LINES {
             break;
         }
-        let bottom = block[block.len() - 1];
-        if let Some(below) = neighbour(boxes, bottom, &block, Side::Below) {
-            block.push(below);
+        let last = block[block.len() - 1];
+        if let Some(next) = neighbour(boxes, last, &block, Side::After, vertical) {
+            block.push(next);
         }
         if block.len() == before {
             break;
@@ -65,26 +93,45 @@ pub fn block_around(boxes: &[[i32; 4]], index: usize) -> Vec<usize> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Side {
-    Above,
-    Below,
+    Before,
+    After,
 }
 
-/// The nearest line of the same block above or below `boxes[from]` that is not in `block` yet.
-fn neighbour(boxes: &[[i32; 4]], from: usize, block: &[usize], side: Side) -> Option<usize> {
-    let from_center = boxes[from][1] + boxes[from][3];
+/// Position of a box along the reading direction of its block: the vertical center for lines,
+/// the mirrored horizontal center for columns (they are read from right to left).
+fn reading_position(bbox: [i32; 4], vertical: bool) -> i32 {
+    if vertical {
+        -(bbox[0] + bbox[2])
+    } else {
+        bbox[1] + bbox[3]
+    }
+}
+
+/// The nearest box of the same block before or after `boxes[from]` in reading order that is not
+/// in `block` yet.
+fn neighbour(
+    boxes: &[[i32; 4]],
+    from: usize,
+    block: &[usize],
+    side: Side,
+    vertical: bool,
+) -> Option<usize> {
+    let from_position = reading_position(boxes[from], vertical);
     boxes
         .iter()
         .enumerate()
         .filter(|(index, candidate)| {
-            let center = candidate[1] + candidate[3];
+            let position = reading_position(**candidate, vertical);
             !block.contains(index)
                 && same_block(boxes[from], **candidate)
                 && match side {
-                    Side::Above => center < from_center,
-                    Side::Below => center > from_center,
+                    Side::Before => position < from_position,
+                    Side::After => position > from_position,
                 }
         })
-        .min_by_key(|(_, candidate)| (candidate[1] + candidate[3] - from_center).abs())
+        .min_by_key(|(_, candidate)| {
+            (reading_position(**candidate, vertical) - from_position).abs()
+        })
         .map(|(index, _)| index)
 }
 
@@ -245,5 +292,104 @@ mod tests {
         ];
 
         assert_eq!(block_around(&boxes, 0), vec![0, 2, 1]);
+    }
+
+    // --- vertical columns ---
+
+    /// A column box of the given width starting at (x, y) and `height` tall.
+    fn column(x: i32, y: i32, width: i32, height: i32) -> [i32; 4] {
+        [x, y, x + width, y + height]
+    }
+
+    #[test]
+    fn boxes_clearly_taller_than_wide_are_vertical() {
+        assert!(is_vertical(column(100, 100, 40, 400)));
+        assert!(is_vertical(column(100, 100, 40, 80)));
+        assert!(!is_vertical(line(100, 100, 400, 40)));
+    }
+
+    #[test]
+    fn nearly_square_boxes_such_as_a_single_character_are_not_vertical() {
+        assert!(!is_vertical(line(100, 100, 40, 40)));
+        assert!(!is_vertical(column(100, 100, 40, 50)));
+        assert!(is_vertical(column(100, 100, 40, 51)));
+    }
+
+    #[test]
+    fn neighbouring_columns_are_one_block() {
+        // Width 40, 20 px apart, the second column shorter and starting lower.
+        assert!(same_block(
+            column(600, 100, 40, 500),
+            column(540, 140, 40, 380)
+        ));
+        assert!(same_block(
+            column(540, 140, 40, 380),
+            column(600, 100, 40, 500)
+        ));
+    }
+
+    #[test]
+    fn columns_far_apart_are_different_blocks() {
+        assert!(!same_block(
+            column(600, 100, 40, 500),
+            column(400, 100, 40, 500)
+        ));
+    }
+
+    #[test]
+    fn columns_at_different_heights_without_shared_extent_are_different_blocks() {
+        assert!(!same_block(
+            column(600, 100, 40, 300),
+            column(540, 600, 40, 300)
+        ));
+    }
+
+    #[test]
+    fn a_line_and_a_column_never_share_a_block() {
+        assert!(!same_block(
+            line(100, 100, 400, 40),
+            column(150, 160, 40, 400)
+        ));
+        assert!(!same_block(
+            column(150, 160, 40, 400),
+            line(100, 100, 400, 40)
+        ));
+    }
+
+    #[test]
+    fn columns_of_very_different_widths_are_different_blocks() {
+        assert!(!same_block(
+            column(600, 100, 80, 500),
+            column(530, 100, 30, 500)
+        ));
+    }
+
+    #[test]
+    fn the_block_of_columns_is_listed_from_right_to_left() {
+        let boxes = [
+            column(300, 100, 40, 500),
+            column(420, 100, 40, 500),
+            column(360, 100, 40, 500),
+        ];
+
+        assert_eq!(block_around(&boxes, 0), vec![1, 2, 0]);
+        assert_eq!(block_around(&boxes, 1), vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn a_vertical_block_never_exceeds_the_maximum_and_keeps_the_neighbours_on_both_sides() {
+        let boxes: Vec<[i32; 4]> = (0..6).map(|n| column(800 - n * 60, 100, 40, 500)).collect();
+
+        assert_eq!(block_around(&boxes, 2), vec![1, 2, 3]);
+        assert_eq!(block_around(&boxes, 0), vec![0, 1, 2]);
+        assert_eq!(block_around(&boxes, 5), vec![3, 4, 5]);
+    }
+
+    #[test]
+    fn horizontal_lines_do_not_join_a_column_block() {
+        let boxes = [column(600, 100, 40, 500), line(100, 650, 400, 40)];
+
+        assert_eq!(block_around(&boxes, 0), vec![0]);
+        assert_eq!(block_around(&boxes, 1), vec![1]);
     }
 }

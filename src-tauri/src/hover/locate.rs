@@ -25,36 +25,41 @@ pub struct CharacterHit {
     pub char_bbox: [i32; 4],
     /// `[x1, y1, x2, y2]` of the hovered line, in screen pixels.
     pub line_bbox: [i32; 4],
+    /// Whether the hovered text is a vertical column.
+    pub vertical: bool,
 }
 
 /// Finds the character at `cursor` (screen pixels). When the cursor is between two lines the
-/// nearest one wins; within a line the nearest character wins if it is close enough.
+/// nearest one wins; within a line the nearest character wins if it is close enough. Works for
+/// horizontal lines and vertical columns alike.
 pub fn character_at(lines: &[OcrLine], cursor: (i32, i32)) -> Option<CharacterHit> {
-    let (cursor_x, cursor_y) = cursor;
     let (line_index, line) = lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| {
-            let [_, top, _, bottom] = line.bbox;
-            cursor_y >= top - LINE_MARGIN && cursor_y <= bottom + LINE_MARGIN
-        })
-        .min_by_key(|(_, line)| {
-            let [left, top, right, bottom] = line.bbox;
-            // Closest vertically first; for lines at the same height, the closest horizontally.
-            (
-                (cursor_y - (top + bottom) / 2).abs(),
-                horizontal_distance([left, top, right, bottom], cursor_x),
-            )
-        })?;
+        .filter_map(|(index, line)| Some((index, line, distances_to_line(line, cursor)?)))
+        .min_by_key(|(_, _, distances)| *distances)
+        .map(|(index, line, _)| (index, line))?;
 
-    let line_height = line.bbox[3] - line.bbox[1];
+    let thickness = if line.vertical {
+        line.bbox[2] - line.bbox[0]
+    } else {
+        line.bbox[3] - line.bbox[1]
+    };
+    let along = if line.vertical { cursor.1 } else { cursor.0 };
     let (index, distance) = line
         .chars
         .iter()
         .enumerate()
-        .map(|(index, ocr_char)| (index, horizontal_distance(ocr_char.bbox, cursor_x)))
+        .map(|(index, ocr_char)| {
+            let (start, end) = if line.vertical {
+                (ocr_char.bbox[1], ocr_char.bbox[3])
+            } else {
+                (ocr_char.bbox[0], ocr_char.bbox[2])
+            };
+            (index, axis_distance(start, end, along))
+        })
         .min_by_key(|(_, distance)| *distance)?;
-    if distance > line_height / 2 {
+    if distance > thickness / 2 {
         return None;
     }
 
@@ -68,7 +73,27 @@ pub fn character_at(lines: &[OcrLine], cursor: (i32, i32)) -> Option<CharacterHi
         offset: offset_of_line + offset_in_line,
         char_bbox: line.chars[index].bbox,
         line_bbox: line.bbox,
+        vertical: line.vertical,
     })
+}
+
+/// How far the cursor is from a line, or `None` if it is too far across the line to be on it.
+/// The pair is (distance of the cursor from the center of the line across it, distance along it),
+/// so lines compare first by how well they are hit and then by how close they are.
+fn distances_to_line(line: &OcrLine, cursor: (i32, i32)) -> Option<(i32, i32)> {
+    let [left, top, right, bottom] = line.bbox;
+    let (across_start, across_end, across, along_start, along_end, along) = if line.vertical {
+        (left, right, cursor.0, top, bottom, cursor.1)
+    } else {
+        (top, bottom, cursor.1, left, right, cursor.0)
+    };
+    if across < across_start - LINE_MARGIN || across > across_end + LINE_MARGIN {
+        return None;
+    }
+    Some((
+        (across - (across_start + across_end) / 2).abs(),
+        axis_distance(along_start, along_end, along),
+    ))
 }
 
 /// The text of the block around `lines[line_index]` (its lines top to bottom, joined without
@@ -87,12 +112,12 @@ fn join_block(lines: &[OcrLine], line_index: usize) -> (String, usize) {
     (text, offset_of_line)
 }
 
-/// 0 when `x` is inside the box, otherwise the distance to its nearest side.
-fn horizontal_distance(bbox: [i32; 4], x: i32) -> i32 {
-    if x < bbox[0] {
-        bbox[0] - x
-    } else if x >= bbox[2] {
-        x - bbox[2] + 1
+/// 0 when `value` is inside `[start, end)`, otherwise the distance to the nearest end.
+fn axis_distance(start: i32, end: i32, value: i32) -> i32 {
+    if value < start {
+        start - value
+    } else if value >= end {
+        value - end + 1
     } else {
         0
     }
@@ -131,6 +156,7 @@ mod tests {
             text: text.to_string(),
             bbox: [x, y, x + chars.len() as i32 * width, y + height],
             chars,
+            vertical: false,
         }
     }
 
@@ -158,6 +184,7 @@ mod tests {
                 offset: 2,
                 char_bbox: [180, 900, 220, 950],
                 line_bbox: [100, 900, 260, 950],
+                vertical: false,
             }
         );
     }
@@ -315,6 +342,123 @@ mod tests {
         assert_eq!(hit.offset, 2);
     }
 
+    /// A vertical column of `text` with `size`-pixel characters, its top-left corner at (x, y).
+    fn column_of(text: &str, x: i32, y: i32, size: i32) -> OcrLine {
+        let chars: Vec<OcrChar> = text
+            .chars()
+            .enumerate()
+            .map(|(index, character)| OcrChar {
+                character,
+                bbox: [
+                    x,
+                    y + index as i32 * size,
+                    x + size,
+                    y + (index as i32 + 1) * size,
+                ],
+                confidence: 0.9,
+            })
+            .collect();
+        OcrLine {
+            text: text.to_string(),
+            bbox: [x, y, x + size, y + chars.len() as i32 * size],
+            chars,
+            vertical: true,
+        }
+    }
+
+    #[test]
+    fn finds_the_character_under_the_cursor_in_a_vertical_column() {
+        let lines = [column_of("猫が好き", 800, 200, 40)];
+
+        let hit = character_at(&lines, (820, 285)).expect("hit");
+
+        assert_eq!(
+            hit,
+            CharacterHit {
+                text: "猫が好き".to_string(),
+                offset: 2,
+                char_bbox: [800, 280, 840, 320],
+                line_bbox: [800, 200, 840, 360],
+                vertical: true,
+            }
+        );
+    }
+
+    #[test]
+    fn the_first_and_last_characters_of_a_column_are_reachable_and_the_ends_are_tolerant() {
+        let lines = [column_of("猫が好き", 800, 200, 40)];
+
+        assert_eq!(character_at(&lines, (810, 200)).expect("first").offset, 0);
+        assert_eq!(character_at(&lines, (810, 359)).expect("last").offset, 3);
+        assert_eq!(
+            character_at(&lines, (810, 375))
+                .expect("past the end")
+                .offset,
+            3
+        );
+        assert_eq!(
+            character_at(&lines, (810, 185))
+                .expect("before the start")
+                .offset,
+            0
+        );
+    }
+
+    #[test]
+    fn the_cursor_far_from_a_column_hits_nothing() {
+        let lines = [column_of("猫が好き", 800, 200, 40)];
+
+        assert_eq!(character_at(&lines, (810, 450)), None);
+        assert_eq!(character_at(&lines, (700, 250)), None);
+        assert_eq!(character_at(&lines, (900, 250)), None);
+        assert!(character_at(&lines, (800 - LINE_MARGIN, 250)).is_some());
+        assert_eq!(character_at(&lines, (800 - LINE_MARGIN - 1, 250)), None);
+    }
+
+    #[test]
+    fn neighbouring_columns_are_joined_from_right_to_left() {
+        let lines = [
+            column_of("二列目です", 740, 220, 40),
+            column_of("一列目から", 800, 200, 40),
+        ];
+
+        let on_first = character_at(&lines, (820, 215)).expect("first column");
+        let on_second = character_at(&lines, (760, 235)).expect("second column");
+
+        assert_eq!(on_first.text, "一列目から二列目です");
+        assert_eq!(on_first.offset, 0);
+        assert_eq!(on_second.text, "一列目から二列目です");
+        assert_eq!(on_second.offset, 5);
+        assert!(on_second.vertical);
+    }
+
+    #[test]
+    fn a_horizontal_line_beside_a_column_is_not_joined_to_it() {
+        let lines = [
+            column_of("縦書き", 800, 200, 40),
+            line("横書き", 100, 220, 40, 40),
+        ];
+
+        assert_eq!(
+            character_at(&lines, (820, 215)).expect("column").text,
+            "縦書き"
+        );
+        assert_eq!(
+            character_at(&lines, (120, 240)).expect("line").text,
+            "横書き"
+        );
+    }
+
+    #[test]
+    fn the_column_hit_by_the_cursor_wins_over_a_nearer_unrelated_one() {
+        let lines = [
+            column_of("近い", 800, 200, 40),
+            column_of("遠い", 500, 200, 40),
+        ];
+
+        assert_eq!(character_at(&lines, (515, 215)).expect("hit").text, "遠い");
+    }
+
     #[test]
     fn no_lines_or_lines_without_characters_hit_nothing() {
         assert_eq!(character_at(&[], (10, 10)), None);
@@ -322,6 +466,7 @@ mod tests {
             text: String::new(),
             bbox: [0, 0, 100, 40],
             chars: vec![],
+            vertical: false,
         };
         assert_eq!(character_at(&[empty], (10, 10)), None);
     }
@@ -372,7 +517,8 @@ mod tests {
                 "text": "猫",
                 "offset": 0,
                 "charBbox": [0, 0, 40, 50],
-                "lineBbox": [0, 0, 40, 50]
+                "lineBbox": [0, 0, 40, 50],
+                "vertical": false
             })
         );
     }

@@ -3,6 +3,7 @@
 
 use image::RgbImage;
 
+use super::layout::is_vertical;
 use super::raster::{crop, resize_bilinear, to_bgr_planar};
 use super::{OcrChar, OcrLine};
 
@@ -21,6 +22,16 @@ pub const DET_MAX_BOXES: usize = 64;
 pub const SEGMENT_ASPECT: i32 = 26;
 /// Neighbouring segments share this many line heights so no character is lost at a cut.
 pub const SEGMENT_OVERLAP_ASPECT: i32 = 4;
+
+/// Vertical recognition canvas: columns are scaled to this width and at most this tall.
+pub const VREC_WIDTH: usize = 32;
+pub const VREC_HEIGHT: usize = 480;
+/// The vertical recognition model emits at most this many characters per segment.
+pub const VREC_MAX_CHARS: usize = 24;
+/// Height of the content of a segment when a long column has to be split (the rest is padding).
+pub const VREC_SPLIT_CONTENT_HEIGHT: usize = 420;
+/// Neighbouring vertical segments share this many pixels of the scaled canvas.
+pub const VREC_OVERLAP: usize = 64;
 
 const OVERLAP_THRESHOLD: f32 = 0.3;
 const EPSILON: f32 = 1e-6;
@@ -104,6 +115,8 @@ pub fn decode_detection(
 pub struct LineInput {
     /// Position of the whole line in the original image: `[x1, y1, x2, y2]`.
     pub bbox: [i32; 4],
+    /// Whether the text runs top to bottom (a column).
+    pub vertical: bool,
     pub segments: Vec<RecognitionInput>,
 }
 
@@ -131,28 +144,81 @@ pub fn segment_boxes(bbox: [i32; 4]) -> Vec<[i32; 4]> {
         .collect()
 }
 
-/// Prepares every segment of a detected line; `None` if no segment can be read.
+/// Prepares every segment of a detected line or column; `None` if no segment can be read.
 pub fn prepare_line(image: &RgbImage, bbox: [i32; 4]) -> Option<LineInput> {
-    let segments: Vec<RecognitionInput> = segment_boxes(bbox)
-        .into_iter()
-        .filter_map(|segment| prepare_recognition(image, segment))
-        .collect();
+    let segments: Vec<RecognitionInput> = if is_vertical(bbox) {
+        let (boxes, max_height) = vertical_segment_boxes(bbox);
+        boxes
+            .into_iter()
+            .filter_map(|segment| prepare_vertical_recognition(image, segment, max_height))
+            .collect()
+    } else {
+        segment_boxes(bbox)
+            .into_iter()
+            .filter_map(|segment| prepare_recognition(image, segment))
+            .collect()
+    };
     if segments.is_empty() {
         None
     } else {
-        Some(LineInput { bbox, segments })
+        Some(LineInput {
+            bbox,
+            vertical: is_vertical(bbox),
+            segments,
+        })
     }
+}
+
+/// Splits a column box into overlapping boxes the vertical model can read, and returns the
+/// largest height (in scaled canvas pixels) the content of a segment may have. A column whose
+/// scaled height fits the canvas stays whole.
+pub fn vertical_segment_boxes(bbox: [i32; 4]) -> (Vec<[i32; 4]>, usize) {
+    let [x1, y1, x2, y2] = bbox;
+    let scale = VREC_WIDTH as f64 / f64::from(x2 - x1).max(1.0);
+    if f64::from(y2 - y1) * scale <= VREC_HEIGHT as f64 {
+        return (vec![bbox], VREC_HEIGHT);
+    }
+
+    let segment_height = VREC_SPLIT_CONTENT_HEIGHT as f64 / scale;
+    let stride = (VREC_SPLIT_CONTENT_HEIGHT - VREC_OVERLAP) as f64 / scale;
+    let mut starts: Vec<f64> = Vec::new();
+    let mut current = f64::from(y1);
+    while current + segment_height < f64::from(y2) {
+        starts.push(current);
+        current += stride;
+    }
+    let last = f64::from(y2) - segment_height;
+    if starts
+        .last()
+        .is_none_or(|first_of_last| last > first_of_last + 1.0)
+    {
+        starts.push(last);
+    }
+
+    let boxes = starts
+        .into_iter()
+        .map(|start| {
+            let top = round_half_even(start) as i32;
+            let bottom = (round_half_even(start + segment_height) as i32).min(y2);
+            [x1, top, x2, bottom]
+        })
+        .collect();
+    (boxes, VREC_SPLIT_CONTENT_HEIGHT)
 }
 
 /// A text line cropped and sized for the recognition model.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecognitionInput {
-    /// Planar BGR tensor `[3, REC_HEIGHT, REC_WIDTH]`.
+    /// Planar BGR tensor: `[3, REC_HEIGHT, REC_WIDTH]` for a line, `[3, VREC_HEIGHT, VREC_WIDTH]`
+    /// for a vertical column.
     pub tensor: Vec<f32>,
-    /// Width in pixels of the part of the canvas that holds the line (the rest is padding).
-    pub effective_width: usize,
-    /// Position of the line in the original image: `[x1, y1, x2, y2]`.
+    /// Size in canvas pixels of the part that holds the text along its direction: the width for a
+    /// line, the height for a column (the rest is padding).
+    pub effective_length: usize,
+    /// Position of the segment in the original image: `[x1, y1, x2, y2]`.
     pub bbox: [i32; 4],
+    /// Whether the text runs top to bottom.
+    pub vertical: bool,
 }
 
 /// Crops a detected line and scales it to the recognition height. `None` for lines too small to
@@ -179,8 +245,38 @@ pub fn prepare_recognition(image: &RgbImage, bbox: [i32; 4]) -> Option<Recogniti
     let resized = resize_bilinear(&pixels, crop_width, crop_height, new_width, new_height);
     Some(RecognitionInput {
         tensor: to_bgr_planar(&resized, new_width, new_height, REC_WIDTH, REC_HEIGHT),
-        effective_width: new_width,
+        effective_length: new_width,
         bbox,
+        vertical: false,
+    })
+}
+
+/// Crops a column and scales it to the vertical model width. `max_height` is the largest height
+/// of the scaled content (see [`vertical_segment_boxes`]). `None` if nothing is left.
+pub fn prepare_vertical_recognition(
+    image: &RgbImage,
+    bbox: [i32; 4],
+    max_height: usize,
+) -> Option<RecognitionInput> {
+    let [x1, y1, x2, y2] = bbox;
+    let (crop_width, crop_height) = ((x2 - x1) as usize, (y2 - y1) as usize);
+    if crop_width == 0 || crop_height == 0 {
+        return None;
+    }
+
+    let scale = VREC_WIDTH as f64 / crop_width as f64;
+    let new_height = round_half_even(crop_height as f64 * scale).min(max_height);
+    if new_height == 0 {
+        return None;
+    }
+
+    let pixels = crop(image, x1 as usize, y1 as usize, x2 as usize, y2 as usize);
+    let resized = resize_bilinear(&pixels, crop_width, crop_height, VREC_WIDTH, new_height);
+    Some(RecognitionInput {
+        tensor: to_bgr_planar(&resized, VREC_WIDTH, new_height, VREC_WIDTH, VREC_HEIGHT),
+        effective_length: new_height,
+        bbox,
+        vertical: true,
     })
 }
 
@@ -199,8 +295,9 @@ pub struct Candidate {
 
 /// Turns the raw recognition output of one segment into character candidates.
 ///
-/// `labels`, `boxes` (x1, y1, x2, y2 in the `REC_WIDTH x REC_HEIGHT` canvas) and `scores` hold
-/// `REC_MAX_CHARS` entries. Low scores and characters that fall in the padding are dropped.
+/// `labels`, `boxes` (x1, y1, x2, y2 in the model canvas) and `scores` hold `REC_MAX_CHARS`
+/// entries for a line or `VREC_MAX_CHARS` for a column. Low scores and characters that fall in
+/// the padding are dropped.
 pub fn segment_candidates(
     input: &RecognitionInput,
     labels: &[i32],
@@ -208,10 +305,9 @@ pub fn segment_candidates(
     scores: &[f32],
     threshold: f32,
 ) -> Vec<Candidate> {
-    let [line_x1, line_y1, line_x2, line_y2] = input.bbox;
-    let line_width = (line_x2 - line_x1) as f32;
-    let line_height = (line_y2 - line_y1) as f32;
-    let effective_width = input.effective_width as f32;
+    let [x1, y1, x2, y2] = input.bbox;
+    let (segment_width, segment_height) = ((x2 - x1) as f32, (y2 - y1) as f32);
+    let effective_length = input.effective_length as f32;
 
     let mut candidates = Vec::new();
     for ((label, coordinates), score) in labels.iter().zip(boxes.as_chunks::<4>().0).zip(scores) {
@@ -227,19 +323,36 @@ pub fn segment_candidates(
             coordinates[2],
             coordinates[3],
         );
-        if left >= effective_width {
-            continue;
-        }
-        let right = right.min(effective_width);
-        let left = left.min(effective_width);
+        let bbox = if input.vertical {
+            if top >= effective_length {
+                continue;
+            }
+            let (top, bottom) = (top.min(effective_length), bottom.min(effective_length));
+            let mapped = [
+                x1 + (left / VREC_WIDTH as f32 * segment_width) as i32,
+                y1 + (top / effective_length * segment_height) as i32,
+                x1 + (right / VREC_WIDTH as f32 * segment_width) as i32,
+                y1 + (bottom / effective_length * segment_height) as i32,
+            ];
+            if mapped[3] <= mapped[1] {
+                continue;
+            }
+            mapped
+        } else {
+            if left >= effective_length {
+                continue;
+            }
+            let (left, right) = (left.min(effective_length), right.min(effective_length));
+            [
+                x1 + (left / effective_length * segment_width) as i32,
+                y1 + (top / REC_HEIGHT as f32 * segment_height) as i32,
+                x1 + (right / effective_length * segment_width) as i32,
+                y1 + (bottom / REC_HEIGHT as f32 * segment_height) as i32,
+            ]
+        };
         candidates.push(Candidate {
             character,
-            bbox: [
-                line_x1 + (left / effective_width * line_width) as i32,
-                line_y1 + (top / REC_HEIGHT as f32 * line_height) as i32,
-                line_x1 + (right / effective_width * line_width) as i32,
-                line_y1 + (bottom / REC_HEIGHT as f32 * line_height) as i32,
-            ],
+            bbox,
             confidence: *score,
         });
     }
@@ -247,9 +360,10 @@ pub fn segment_candidates(
 }
 
 /// Builds the line from the candidates of all its segments: overlapping duplicates are
-/// suppressed (the most confident wins) and the characters are put in reading order.
-pub fn assemble_line(bbox: [i32; 4], candidates: Vec<Candidate>) -> OcrLine {
-    let chars: Vec<OcrChar> = suppress_overlaps(candidates)
+/// suppressed (the most confident wins) and the characters are put in reading order (left to
+/// right, or top to bottom for a column).
+pub fn assemble_line(bbox: [i32; 4], candidates: Vec<Candidate>, vertical: bool) -> OcrLine {
+    let chars: Vec<OcrChar> = suppress_overlaps(candidates, vertical)
         .into_iter()
         .map(|candidate| OcrChar {
             character: candidate.character,
@@ -257,7 +371,7 @@ pub fn assemble_line(bbox: [i32; 4], candidates: Vec<Candidate>) -> OcrLine {
             confidence: candidate.confidence,
         })
         .collect();
-    build_line(bbox, chars)
+    build_line(bbox, chars, vertical)
 }
 
 /// Turns the raw recognition output of one line that was read as a single segment into text.
@@ -271,18 +385,21 @@ pub fn decode_recognition(
     assemble_line(
         input.bbox,
         segment_candidates(input, labels, boxes, scores, threshold),
+        input.vertical,
     )
 }
 
-/// Greedy non-maximum suppression along the horizontal axis, returned left to right.
-fn suppress_overlaps(mut candidates: Vec<Candidate>) -> Vec<Candidate> {
+/// Greedy non-maximum suppression along the reading axis (horizontal, or vertical for a column),
+/// returned in reading order.
+fn suppress_overlaps(mut candidates: Vec<Candidate>, vertical: bool) -> Vec<Candidate> {
+    let (from, to) = if vertical { (1, 3) } else { (0, 2) };
     candidates.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
     let mut accepted: Vec<Candidate> = Vec::new();
 
     for candidate in candidates {
-        let (start, end) = (candidate.bbox[0], candidate.bbox[2]);
+        let (start, end) = (candidate.bbox[from], candidate.bbox[to]);
         let overlaps = accepted.iter().any(|kept| {
-            let (kept_start, kept_end) = (kept.bbox[0], kept.bbox[2]);
+            let (kept_start, kept_end) = (kept.bbox[from], kept.bbox[to]);
             if start >= kept_end || kept_start >= end {
                 return false;
             }
@@ -295,11 +412,11 @@ fn suppress_overlaps(mut candidates: Vec<Candidate>) -> Vec<Candidate> {
             accepted.push(candidate);
         }
     }
-    accepted.sort_by_key(|candidate| candidate.bbox[0]);
+    accepted.sort_by_key(|candidate| candidate.bbox[from]);
     accepted
 }
 
-fn build_line(bbox: [i32; 4], mut chars: Vec<OcrChar>) -> OcrLine {
+fn build_line(bbox: [i32; 4], mut chars: Vec<OcrChar>, vertical: bool) -> OcrLine {
     let mut text: String = chars.iter().map(|ocr_char| ocr_char.character).collect();
     for wrong in SWAPPED_PAIRS {
         if let Some(byte_index) = text.find(wrong) {
@@ -310,7 +427,12 @@ fn build_line(bbox: [i32; 4], mut chars: Vec<OcrChar>) -> OcrLine {
             }
         }
     }
-    OcrLine { text, bbox, chars }
+    OcrLine {
+        text,
+        bbox,
+        chars,
+        vertical,
+    }
 }
 
 #[cfg(test)]
@@ -324,8 +446,9 @@ mod tests {
     fn input(effective_width: usize, bbox: [i32; 4]) -> RecognitionInput {
         RecognitionInput {
             tensor: vec![],
-            effective_width,
+            effective_length: effective_width,
             bbox,
+            vertical: false,
         }
     }
 
@@ -466,7 +589,7 @@ mod tests {
             prepare_recognition(&white_image(800, 100), [100, 10, 500, 60]).expect("line");
 
         // 400x50 scaled to height 32 gives width 256.
-        assert_eq!(prepared.effective_width, 256);
+        assert_eq!(prepared.effective_length, 256);
         assert_eq!(prepared.bbox, [100, 10, 500, 60]);
         assert_eq!(prepared.tensor.len(), 3 * REC_HEIGHT * REC_WIDTH);
         assert_eq!(prepared.tensor[31 * REC_WIDTH + 255], 1.0);
@@ -479,7 +602,7 @@ mod tests {
             prepare_recognition(&white_image(1900, 100), [0, 0, 1900, 50]).expect("line");
 
         // 1900x50 would be 1216 wide at height 32; it is shrunk to 960 and height 25 (rounded).
-        assert_eq!(prepared.effective_width, 960);
+        assert_eq!(prepared.effective_length, 960);
         assert_eq!(prepared.tensor[24 * REC_WIDTH + 959], 1.0);
         assert_eq!(prepared.tensor[25 * REC_WIDTH + 959], 0.0);
     }
@@ -490,7 +613,7 @@ mod tests {
         // 5x64 -> 2.5, which Python rounds to 2.
         let prepared = prepare_recognition(&white_image(10, 64), [0, 0, 5, 64]).expect("line");
 
-        assert_eq!(prepared.effective_width, 2);
+        assert_eq!(prepared.effective_length, 2);
         assert_eq!(round_half_even(0.5), 0);
         assert_eq!(round_half_even(1.5), 2);
         assert_eq!(round_half_even(2.5), 2);
@@ -805,7 +928,7 @@ mod tests {
             &second,
         ));
 
-        let line = assemble_line([0, 0, 960, 20], all);
+        let line = assemble_line([0, 0, 960, 20], all, false);
 
         assert_eq!(line.text, "猫が好");
         assert_eq!(line.chars.len(), 3);
@@ -817,7 +940,7 @@ mod tests {
 
     #[test]
     fn assembling_without_candidates_gives_an_empty_line_with_the_box() {
-        let line = assemble_line([5, 6, 700, 40], vec![]);
+        let line = assemble_line([5, 6, 700, 40], vec![], false);
 
         assert_eq!(line.text, "");
         assert_eq!(line.bbox, [5, 6, 700, 40]);

@@ -18,6 +18,7 @@ ORT_LIBRARY_SHA256="469849977cb60744ea160927e1a3a0643fd4c55c0aff743251c6d293402e
 MODELS=(
     "meiki.text.detect.v0.1.960x544.onnx|rtr46/meiki.text.detect.v0|40b6a016667745cae7d3055929ae3b8b1e7716aac795f5904cd3c2c7c3b8404b"
     "meiki.text.rec.v0.960x32.onnx|rtr46/meiki.txt.recognition.v0|3e96bc772fbee9717e536a6353032bb944c3382dd2f6960ef4890decda43b000"
+    "meiki.text.rec.v0.vertical.32x480.onnx|rtr46/meiki.txt.recognition.v0|2c2a83a23bc3b7e6c63962175f507ecc6c5e85cc174f17bdec37d9bbd0bf895a"
 )
 
 sha256_of() {

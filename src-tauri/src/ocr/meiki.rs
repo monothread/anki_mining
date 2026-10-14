@@ -10,7 +10,7 @@ use super::layout::block_around;
 use super::pipeline::{
     assemble_line, decode_detection, prepare_detection, prepare_line, segment_candidates,
     Candidate, LineInput, RecognitionInput, DET_HEIGHT, DET_MAX_BOXES, DET_WIDTH, REC_HEIGHT,
-    REC_MAX_CHARS, REC_WIDTH,
+    REC_MAX_CHARS, REC_WIDTH, VREC_HEIGHT, VREC_MAX_CHARS, VREC_WIDTH,
 };
 use super::{OcrEngine, OcrError, OcrLine};
 
@@ -18,6 +18,8 @@ use super::{OcrEngine, OcrError, OcrLine};
 pub const RUNTIME_LIBRARY: &str = "libonnxruntime.so";
 pub const DETECTION_MODEL: &str = "meiki.text.detect.v0.1.960x544.onnx";
 pub const RECOGNITION_MODEL: &str = "meiki.text.rec.v0.960x32.onnx";
+/// Reads vertical columns of text (beta quality). Optional: without it, columns are skipped.
+pub const VERTICAL_RECOGNITION_MODEL: &str = "meiki.text.rec.v0.vertical.32x480.onnx";
 
 /// Confidence thresholds measured in the P3-01 spike (see ADR-006).
 pub const DETECTION_THRESHOLD: f32 = 0.5;
@@ -25,23 +27,35 @@ pub const RECOGNITION_THRESHOLD: f32 = 0.1;
 /// Lines recognized per model call; keeps memory use bounded.
 const RECOGNITION_BATCH: usize = 8;
 
-/// MeikiOCR (horizontal text) running on ONNX Runtime.
-///
-/// Vertical text is not supported yet: tall, narrow boxes are read as horizontal lines.
+/// MeikiOCR running on ONNX Runtime: horizontal lines and, when its model is present, vertical
+/// columns of text.
 pub struct MeikiEngine {
     detector: Session,
     recognizer: Session,
+    vertical_recognizer: Option<Session>,
 }
 
 impl MeikiEngine {
-    /// Loads the ONNX Runtime library and both models from `directory` (see
-    /// `scripts/fetch-ocr-models.sh`).
+    /// Loads the ONNX Runtime library and the models from `directory` (see
+    /// `scripts/fetch-ocr-models.sh`). The vertical model is optional.
     pub fn from_directory(directory: &Path) -> Result<MeikiEngine, OcrError> {
         let environment = shared_environment(&directory.join(RUNTIME_LIBRARY))?;
+        let vertical_path = directory.join(VERTICAL_RECOGNITION_MODEL);
+        let vertical_recognizer = if vertical_path.is_file() {
+            Some(load_session(&environment, &vertical_path)?)
+        } else {
+            None
+        };
         Ok(MeikiEngine {
             detector: load_session(&environment, &directory.join(DETECTION_MODEL))?,
             recognizer: load_session(&environment, &directory.join(RECOGNITION_MODEL))?,
+            vertical_recognizer,
         })
+    }
+
+    /// Whether vertical columns of text can be read.
+    pub fn reads_vertical_text(&self) -> bool {
+        self.vertical_recognizer.is_some()
     }
 
     fn detect(&mut self, image: &RgbImage) -> Result<Vec<[i32; 4]>, OcrError> {
@@ -71,20 +85,34 @@ impl MeikiEngine {
         ))
     }
 
-    /// Reads a batch of segments and returns the character candidates of each.
+    /// Reads a batch of segments of the same orientation and returns the character candidates of
+    /// each. `Ok` with no candidates when the vertical model is not available.
     fn recognize_batch(
         &mut self,
         batch: &[&RecognitionInput],
+        vertical: bool,
     ) -> Result<Vec<Vec<Candidate>>, OcrError> {
-        let mut data = Vec::with_capacity(batch.len() * 3 * REC_HEIGHT * REC_WIDTH);
+        let (width, height, max_chars) = if vertical {
+            (VREC_WIDTH, VREC_HEIGHT, VREC_MAX_CHARS)
+        } else {
+            (REC_WIDTH, REC_HEIGHT, REC_MAX_CHARS)
+        };
+        let Some(session) = (if vertical {
+            self.vertical_recognizer.as_mut()
+        } else {
+            Some(&mut self.recognizer)
+        }) else {
+            return Ok(vec![Vec::new(); batch.len()]);
+        };
+
+        let mut data = Vec::with_capacity(batch.len() * 3 * width * height);
         for input in batch {
             data.extend_from_slice(&input.tensor);
         }
-        let images = tensor_f32(&[batch.len(), 3, REC_HEIGHT, REC_WIDTH], data)?;
-        let sizes = tensor_i64(&[1, 2], vec![REC_WIDTH as i64, REC_HEIGHT as i64])?;
+        let images = tensor_f32(&[batch.len(), 3, height, width], data)?;
+        let sizes = tensor_i64(&[1, 2], vec![width as i64, height as i64])?;
 
-        let outputs = self
-            .recognizer
+        let outputs = session
             .run(ort::inputs!["images" => images, "orig_target_sizes" => sizes])
             .map_err(inference_error)?;
         let (_, labels) = outputs["char_codes"]
@@ -96,21 +124,13 @@ impl MeikiEngine {
         let (_, scores) = outputs["scores"]
             .try_extract_tensor::<f32>()
             .map_err(inference_error)?;
-        expect_len(
-            "recognition labels",
-            labels.len(),
-            batch.len() * REC_MAX_CHARS,
-        )?;
+        expect_len("recognition labels", labels.len(), batch.len() * max_chars)?;
         expect_len(
             "recognition boxes",
             boxes.len(),
-            batch.len() * REC_MAX_CHARS * 4,
+            batch.len() * max_chars * 4,
         )?;
-        expect_len(
-            "recognition scores",
-            scores.len(),
-            batch.len() * REC_MAX_CHARS,
-        )?;
+        expect_len("recognition scores", scores.len(), batch.len() * max_chars)?;
 
         Ok(batch
             .iter()
@@ -118,9 +138,9 @@ impl MeikiEngine {
             .map(|(index, input)| {
                 segment_candidates(
                     input,
-                    &labels[index * REC_MAX_CHARS..(index + 1) * REC_MAX_CHARS],
-                    &boxes[index * REC_MAX_CHARS * 4..(index + 1) * REC_MAX_CHARS * 4],
-                    &scores[index * REC_MAX_CHARS..(index + 1) * REC_MAX_CHARS],
+                    &labels[index * max_chars..(index + 1) * max_chars],
+                    &boxes[index * max_chars * 4..(index + 1) * max_chars * 4],
+                    &scores[index * max_chars..(index + 1) * max_chars],
                     RECOGNITION_THRESHOLD,
                 )
             })
@@ -140,9 +160,20 @@ impl MeikiEngine {
         let segments: Vec<&RecognitionInput> =
             lines.iter().flat_map(|line| line.segments.iter()).collect();
 
-        let mut per_segment = Vec::with_capacity(segments.len());
-        for batch in segments.chunks(RECOGNITION_BATCH) {
-            per_segment.extend(self.recognize_batch(batch)?);
+        // Lines and columns go to different models, each in batches of its own kind.
+        let mut per_segment: Vec<Vec<Candidate>> = vec![Vec::new(); segments.len()];
+        for vertical in [false, true] {
+            let indices: Vec<usize> = (0..segments.len())
+                .filter(|index| segments[*index].vertical == vertical)
+                .collect();
+            for group in indices.chunks(RECOGNITION_BATCH) {
+                let batch: Vec<&RecognitionInput> =
+                    group.iter().map(|index| segments[*index]).collect();
+                for (index, candidates) in group.iter().zip(self.recognize_batch(&batch, vertical)?)
+                {
+                    per_segment[*index] = candidates;
+                }
+            }
         }
 
         let mut results = per_segment.into_iter();
@@ -153,7 +184,7 @@ impl MeikiEngine {
                 .take(line.segments.len())
                 .flatten()
                 .collect();
-            text_lines.push(assemble_line(line.bbox, candidates));
+            text_lines.push(assemble_line(line.bbox, candidates, line.vertical));
         }
         text_lines.retain(|line| !line.text.is_empty());
         Ok(text_lines)
@@ -203,13 +234,14 @@ fn blocks_near(boxes: &[[i32; 4]], cursor: (i32, i32)) -> Vec<usize> {
     wanted
 }
 
-/// Whether the cursor is on the line or close enough to pick one of its characters.
+/// Whether the cursor is on the line or column, or within one text thickness (the height of a
+/// line, the width of a column) of it.
 fn is_near(bbox: [i32; 4], cursor: (i32, i32)) -> bool {
-    let height = bbox[3] - bbox[1];
-    cursor.0 >= bbox[0] - height
-        && cursor.0 <= bbox[2] + height
-        && cursor.1 >= bbox[1] - height
-        && cursor.1 <= bbox[3] + height
+    let margin = (bbox[3] - bbox[1]).min(bbox[2] - bbox[0]);
+    cursor.0 >= bbox[0] - margin
+        && cursor.0 <= bbox[2] + margin
+        && cursor.1 >= bbox[1] - margin
+        && cursor.1 <= bbox[3] + margin
 }
 
 /// ONNX Runtime allows a single environment per process, so every engine shares the first one.

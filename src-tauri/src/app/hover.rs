@@ -13,7 +13,7 @@ use tauri::{
 
 use crate::capture::{ScreenCapture, X11Capture};
 use crate::config::Config;
-use crate::hover::placement::{popup_position, Rect};
+use crate::hover::placement::{popup_position, popup_position_beside, Rect};
 use crate::hover::trigger::{PointerSample, Trigger, TriggerKey, TriggerMode};
 use crate::hover::{lookup_at, LookupOutcome};
 use crate::ocr::{MeikiEngine, OcrEngine};
@@ -277,14 +277,26 @@ fn look_up(
     match outcome {
         Ok(LookupOutcome::Found(result)) if !result.results.is_empty() => {
             let (screen_width, screen_height) = capture.screen_size();
-            let (x, y) = popup_position(
-                result.line_bbox,
-                cursor.0,
-                POPUP_WIDTH,
-                POPUP_HEIGHT,
-                screen_width as i32,
-                screen_height as i32,
-            );
+            let (screen_width, screen_height) = (screen_width as i32, screen_height as i32);
+            let (x, y) = if result.vertical {
+                popup_position_beside(
+                    result.line_bbox,
+                    cursor.1,
+                    POPUP_WIDTH,
+                    POPUP_HEIGHT,
+                    screen_width,
+                    screen_height,
+                )
+            } else {
+                popup_position(
+                    result.line_bbox,
+                    cursor.0,
+                    POPUP_WIDTH,
+                    POPUP_HEIGHT,
+                    screen_width,
+                    screen_height,
+                )
+            };
             let popup = Rect {
                 x,
                 y,

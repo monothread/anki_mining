@@ -21,4 +21,6 @@ export interface HoverResult {
     charBbox: [number, number, number, number];
     /** `[x1, y1, x2, y2]` of the whole line, in screen pixels. */
     lineBbox: [number, number, number, number];
+    /** Whether the text is a vertical column (the popup goes beside it). */
+    vertical: boolean;
 }

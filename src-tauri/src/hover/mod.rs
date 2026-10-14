@@ -43,6 +43,8 @@ pub struct HoverResult {
     pub char_bbox: [i32; 4],
     /// `[x1, y1, x2, y2]` of the whole line, in screen pixels.
     pub line_bbox: [i32; 4],
+    /// Whether the text is a vertical column (the popup then goes beside it, not under it).
+    pub vertical: bool,
 }
 
 /// What a lookup found at the cursor; the reasons for finding nothing are told to the user.
@@ -134,6 +136,7 @@ pub fn lookup_at(
         results,
         char_bbox: hit.char_bbox,
         line_bbox: hit.line_bbox,
+        vertical: hit.vertical,
     }))
 }
 
@@ -162,6 +165,12 @@ mod tests {
         { "id": "2", "kanji": [{ "common": true, "text": "映画", "tags": [] }],
           "kana": [{ "common": true, "text": "えいが", "tags": [], "appliesToKanji": ["*"] }],
           "sense": [{ "partOfSpeech": ["n"], "gloss": [{ "text": "movie" }] }] },
+        { "id": "4", "kanji": [{ "common": true, "text": "勉強", "tags": [] }],
+          "kana": [{ "common": true, "text": "べんきょう", "tags": [], "appliesToKanji": ["*"] }],
+          "sense": [{ "partOfSpeech": ["n", "vs"], "gloss": [{ "text": "study" }] }] },
+        { "id": "5", "kanji": [{ "common": true, "text": "世界", "tags": [] }],
+          "kana": [{ "common": true, "text": "せかい", "tags": [], "appliesToKanji": ["*"] }],
+          "sense": [{ "partOfSpeech": ["n"], "gloss": [{ "text": "world" }] }] },
         { "id": "3", "kanji": [{ "common": true, "text": "行く", "tags": [] }],
           "kana": [{ "common": true, "text": "いく", "tags": [], "appliesToKanji": ["*"] }],
           "sense": [{ "partOfSpeech": ["v5k-s", "vi"], "gloss": [{ "text": "to go" }] }] }
@@ -223,7 +232,8 @@ mod tests {
             .unwrap_or_else(|error| panic!("{error}; run scripts/fetch-ocr-models.sh"))
     }
 
-    /// A black Full HD screen with a subtitle fixture pasted near the bottom.
+    /// A black Full HD screen with a fixture pasted near the bottom, or higher when it is tall
+    /// enough not to fit there.
     fn screen_with(fixture: &str) -> RgbImage {
         let band = image::open(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -232,8 +242,9 @@ mod tests {
         )
         .expect("fixture")
         .to_rgb8();
+        let top = BAND_TOP.min(SCREEN_HEIGHT - band.height());
         let mut screen = RgbImage::from_pixel(SCREEN_WIDTH, SCREEN_HEIGHT, Rgb([0, 0, 0]));
-        image::imageops::replace(&mut screen, &band, 0, i64::from(BAND_TOP));
+        image::imageops::replace(&mut screen, &band, 0, i64::from(top));
         screen
     }
 
@@ -365,6 +376,7 @@ mod tests {
             text: text.to_string(),
             bbox: [x, 100, x + chars.len() as i32 * 40, 150],
             chars,
+            vertical: false,
         }
     }
 
@@ -469,6 +481,7 @@ mod tests {
             results: vec![],
             char_bbox: [1, 2, 3, 4],
             line_bbox: [0, 2, 10, 4],
+            vertical: false,
         };
 
         assert_eq!(
@@ -478,7 +491,8 @@ mod tests {
                 "wordStart": 0,
                 "results": [],
                 "charBbox": [1, 2, 3, 4],
-                "lineBbox": [0, 2, 10, 4]
+                "lineBbox": [0, 2, 10, 4],
+                "vertical": false
             })
         );
     }
@@ -508,6 +522,7 @@ mod tests {
             results: vec![],
             char_bbox: [0, 0, 1, 1],
             line_bbox: [0, 0, 1, 1],
+            vertical: false,
         });
 
         assert_eq!(
@@ -546,6 +561,7 @@ mod tests {
             }],
             char_bbox: [0, 0, 1, 1],
             line_bbox: [0, 0, 1, 1],
+            vertical: false,
         });
 
         assert_eq!(found_word.explanation(), None);
@@ -605,5 +621,58 @@ mod tests {
             clean_text(&result.sentence),
             "昨日、友達と映画を見に行きました。とても楽しかったです"
         );
+    }
+
+    #[test]
+    fn hovering_a_vertical_column_finds_the_word_and_joins_the_columns_right_to_left() {
+        let screen_image = screen_with("vertical_clean_5.png");
+        let mut screen = FakeScreen(screen_image.clone());
+        let mut engine = real_engine();
+        let tokenizer = Tokenizer::new().expect("tokenizer");
+        let scan = dictionary_scan();
+        let lines = engine.recognize(&screen_image).expect("ocr");
+        assert_eq!(lines.len(), 2, "the fixture has two columns");
+        assert!(lines.iter().all(|line| line.vertical));
+        // The right column is read first: 日本語を勉強しています. 勉 is its fifth character.
+        let right = lines
+            .iter()
+            .max_by_key(|line| line.bbox[2])
+            .expect("right column");
+        let cursor = center(right.chars[4].bbox);
+
+        let result =
+            found(lookup_at(&mut screen, &mut engine, &tokenizer, &scan, cursor).expect("lookup"));
+
+        assert!(result.vertical);
+        assert_eq!(result.sentence, "日本語を勉強しています世界で一番大切な人");
+        assert_eq!(result.word_start, 4);
+        assert_eq!(result.results[0].source, "勉強");
+        assert_eq!(
+            result.results[0].entries[0].entry.meanings,
+            vec!["study".to_string()]
+        );
+        assert_eq!(result.line_bbox, right.bbox);
+    }
+
+    #[test]
+    fn hovering_the_second_column_continues_the_sentence_after_the_first() {
+        let screen_image = screen_with("vertical_clean_5.png");
+        let mut screen = FakeScreen(screen_image.clone());
+        let mut engine = real_engine();
+        let tokenizer = Tokenizer::new().expect("tokenizer");
+        let scan = dictionary_scan();
+        let lines = engine.recognize(&screen_image).expect("ocr");
+        let left = lines
+            .iter()
+            .min_by_key(|line| line.bbox[0])
+            .expect("left column");
+        // 世 is the first character of the left column, after the eleven of the right one.
+        let cursor = center(left.chars[0].bbox);
+
+        let result =
+            found(lookup_at(&mut screen, &mut engine, &tokenizer, &scan, cursor).expect("lookup"));
+
+        assert_eq!(result.word_start, 11);
+        assert_eq!(result.results[0].source, "世界");
     }
 }

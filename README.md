@@ -77,7 +77,7 @@ screenshot, mouse move). More in [docs/PROGRESS.md](docs/PROGRESS.md).
 
 - Overlapping subtitle layers can confuse the OCR, and rare kanji in stylised fonts can be misread. The
   word under the cursor is usually right; the sentence shown may be noisy.
-- Only horizontal text. Multi-line subtitles are joined (up to 3 lines around the hovered one).
+- Vertical text is supported but less accurate than horizontal text (beta model). Multi-line subtitles and neighbouring columns are joined (up to 3 lines around the hovered one).
 - X11 only for now (the global pointer position is not available to apps on Wayland).
 - The popup does not create Anki cards yet.
 

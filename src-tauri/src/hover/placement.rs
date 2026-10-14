@@ -52,6 +52,30 @@ pub fn popup_position(
     (x, y)
 }
 
+/// Places the popup beside a vertical column of text: to its right when there is room (the text
+/// to the right has been read already), otherwise to its left, with its top near the cursor and
+/// kept inside the screen.
+pub fn popup_position_beside(
+    column_bbox: [i32; 4],
+    cursor_y: i32,
+    popup_width: i32,
+    popup_height: i32,
+    screen_width: i32,
+    screen_height: i32,
+) -> (i32, i32) {
+    let right = column_bbox[2] + GAP;
+    let left = column_bbox[0] - GAP - popup_width;
+    let x = if right + popup_width <= screen_width {
+        right
+    } else if left >= 0 {
+        left
+    } else {
+        right.min(screen_width - popup_width).max(0)
+    };
+    let y = (cursor_y - popup_height / 4).clamp(0, (screen_height - popup_height).max(0));
+    (x, y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,5 +168,32 @@ mod tests {
             }
         );
         assert!(rect.grow(5).contains(5, 15));
+    }
+
+    fn beside(column: [i32; 4], cursor_y: i32) -> (i32, i32) {
+        popup_position_beside(column, cursor_y, 440, 320, SCREEN.0, SCREEN.1)
+    }
+
+    #[test]
+    fn the_popup_goes_to_the_right_of_a_column_when_there_is_room() {
+        assert_eq!(beside([800, 200, 840, 700], 400), (852, 320));
+    }
+
+    #[test]
+    fn the_popup_goes_to_the_left_of_a_column_near_the_right_edge() {
+        assert_eq!(beside([1800, 200, 1840, 700], 400), (1800 - 12 - 440, 320));
+    }
+
+    #[test]
+    fn the_popup_beside_a_column_is_kept_inside_the_screen_vertically() {
+        assert_eq!(beside([800, 0, 840, 700], 10).1, 0);
+        assert_eq!(beside([800, 200, 840, 1060], 1050).1, 1080 - 320);
+    }
+
+    #[test]
+    fn when_neither_side_of_a_column_fits_the_popup_is_pushed_into_the_screen() {
+        let (x, _) = popup_position_beside([100, 0, 140, 500], 100, 440, 320, 500, 1080);
+
+        assert!((0..=60).contains(&x));
     }
 }

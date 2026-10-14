@@ -5,7 +5,7 @@
 **Last updated:** 2026-10-14
 **Version:** 0.1.0, first version published (hover lookup works on X11; Anki card creation deferred)
 **Current phase:** 3 done as a first version (OCR + hover lookup); Phase 1 done except the Anki parts (P1-13, P1-14), which are deferred by decision
-**Next step:** keep using the app day to day and fix what fails. Candidates, in rough order: vertical text (P3-15), OCR tuning on real frames (P3-05), mpv exact-text source (P4-02). Anki work (P1-13 check, P1-14, Phase 5) stays last.
+**Next step:** keep using the app and fix what fails. Candidates, in rough order: mpv exact-text source (P4-02), OCR tuning on real frames (P3-05), then the deferred Anki work (P1-13 check, P1-14, Phase 5) and media on cards (Phase 2).
 
 ## Status per phase
 
@@ -62,7 +62,7 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 - A text block is at most 3 lines (the hovered line plus one neighbour on each side), so a long paragraph gives a 3-line sentence.
 - Wayland: the global pointer position is not available to apps; solved in P6-03.
 - OCR accuracy was measured mostly on synthetic subtitles; real checks so far are three YouTube cases. Games and desktop players are still untested.
-- OCR does not read vertical text yet (P3-15).
+- Vertical text is read with the beta vertical model of MeikiOCR: 85% character accuracy on clean synthetic columns (94% on the best case, much worse on bold outlined text). Detection treats a box as a column only when it is at least 25% taller than wide.
 - Deinflection ordering: entries for one text are listed by rule discovery order, so `行って` lists 行う before 行く. Frequency ranking (P6-01) will fix it.
 - Grammar patterns that span several words (e.g. `なければならない`, `ざるを得ない`) are not handled; only single-word inflection chains.
 - Noun + する (勉強して) resolves to the noun 勉強 via `scan`, not to a `勉強する` entry (JMdict has no such headword).
@@ -78,6 +78,7 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 ## Session log
 | Date | Summary | Tasks completed |
 |---|---|---|
+| 2026-10-14 | P3-15 vertical text. The vertical recognition model (`meiki.text.rec.v0.vertical.32x480.onnx`, 12.9 MB, optional: without it columns are skipped) is ported: columns are scaled to 32 px wide and read in overlapping segments of 420 scaled px, characters are merged by suppression along y, text runs top to bottom. `OcrLine.vertical`, `lines_to_text` reads columns right to left, `ocr::layout` groups neighbouring columns (right to left), `character_at` and the popup placement (`popup_position_beside`) handle columns. Spike: `spikes/ocr/make_vertical*.py`, `run_vertical.py`; accuracy depends strongly on the rendering (clean regular weight 87-94%, bold with outline and noise 76%). 450 Rust + 112 Vitest tests | P3-15 |
 | 2026-10-14 | P3-13 and P3-14. Multi-line text: `ocr::layout` groups stacked lines of similar height and overlapping width into blocks (max 3 lines); `recognize_near` reads the whole block near the cursor and `character_at` joins its lines into one sentence with the right UTF-16 offset (a word may start on one line and end on the next). Real-OCR tests on a generated two-line subtitle (`twoline_1080p.png`). The trigger mode and the on/off switch changed from the header are saved to `config.json` (`hoverMode`, `hoverEnabled`); a file that could not be read is never overwritten and a failed save is reported while the change still applies. 426 Rust + 112 Vitest tests | P3-13, P3-14 |
 | 2026-10-14 | **First version published** to https://github.com/monothread/anki_mining: README written, architecture doc rewritten to match the code, docs updated, models/ONNX Runtime/dictionary kept out of git (downloaded by `scripts/fetch-ocr-models.sh` and by the user) | — |
 | 2026-10-14 | Market research, architecture choice and documentation | — |

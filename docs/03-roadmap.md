@@ -50,7 +50,7 @@ The product must work after installing a single app, with no browser extension o
 - [x] P3-06 — Tests (including fixed subtitle and long-line screenshots with expected text) and documentation
 - [x] P3-13 — Multi-line subtitles: join the lines of one subtitle block into the sentence used for the lookup (only the hovered line is used today)
 - [x] P3-14 — Persist the trigger mode and on/off state changed from the header (saved to `config.json`)
-- [ ] P3-15 — Vertical text (games, manga): port the vertical recognition model of MeikiOCR
+- [x] P3-15 — Vertical text (games, manga): port the vertical recognition model of MeikiOCR (beta quality, see PROGRESS)
 - [ ] P3-16 — Visual signal on the word when it is identified (click-through highlight frame); decided to skip for now, see PROGRESS backlog
 
 ## Phase 4 — Exact-text sources (mpv and optional browser extension)

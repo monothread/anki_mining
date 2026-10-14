@@ -81,4 +81,5 @@ export const HOVER_RESULT: HoverResult = {
     ],
     charBbox: [160, 700, 200, 750],
     lineBbox: [40, 700, 760, 750],
+    vertical: false,
 };
