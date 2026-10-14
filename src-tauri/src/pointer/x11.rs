@@ -157,6 +157,7 @@ mod tests {
     #[test]
     #[ignore = "needs an X11 display; run through `scripts/dev.sh test`"]
     fn reads_the_position_the_cursor_was_moved_to() {
+        let _display = crate::x11_test_lock();
         let (connection, screen_number) = x11rb::connect(None).expect("display");
         let root = connection.setup().roots[screen_number].root;
         connection
@@ -175,6 +176,7 @@ mod tests {
     #[test]
     #[ignore = "needs an X11 display; run through `scripts/dev.sh test`"]
     fn finds_the_window_under_the_pointer_and_nothing_over_the_bare_desktop() {
+        let _display = crate::x11_test_lock();
         use x11rb::protocol::xproto::{CreateWindowAux, WindowClass};
         use x11rb::COPY_DEPTH_FROM_PARENT;
 
@@ -232,6 +234,7 @@ mod tests {
     #[test]
     #[ignore = "needs an X11 display; run through `scripts/dev.sh test`"]
     fn connecting_fails_clearly_when_the_display_does_not_exist() {
+        let _display = crate::x11_test_lock();
         let original = std::env::var("DISPLAY").ok();
         std::env::set_var("DISPLAY", ":987");
 

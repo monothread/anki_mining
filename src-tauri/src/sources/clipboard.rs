@@ -346,6 +346,7 @@ mod tests {
     #[test]
     #[ignore = "needs an X11 display; run through `scripts/dev.sh test`"]
     fn system_clipboard_emits_text_copied_by_another_client() {
+        let _display = crate::x11_test_lock();
         let _display = DISPLAY_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -366,6 +367,7 @@ mod tests {
     #[test]
     #[ignore = "needs an X11 display; run through `scripts/dev.sh test`"]
     fn system_reader_reports_missing_text_as_none() {
+        let _display = crate::x11_test_lock();
         let _display = DISPLAY_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());

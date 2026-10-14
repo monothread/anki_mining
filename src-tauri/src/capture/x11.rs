@@ -243,6 +243,7 @@ mod tests {
     #[test]
     #[ignore = "needs an X11 display; run through `scripts/dev.sh test`"]
     fn captures_the_pixels_of_a_window_on_screen() {
+        let _display = crate::x11_test_lock();
         let _window = paint_window(40, 30, 120, 60, 0x00_33_66_99);
         let mut capture = X11Capture::connect().expect("connect");
 
@@ -262,6 +263,7 @@ mod tests {
     #[test]
     #[ignore = "needs an X11 display; run through `scripts/dev.sh test`"]
     fn reports_the_screen_size_and_clips_regions_that_stick_out() {
+        let _display = crate::x11_test_lock();
         let mut capture = X11Capture::connect().expect("connect");
         let (width, height) = capture.screen_size();
 
@@ -281,6 +283,7 @@ mod tests {
     #[test]
     #[ignore = "needs an X11 display; run through `scripts/dev.sh test`"]
     fn a_region_outside_the_screen_is_an_error() {
+        let _display = crate::x11_test_lock();
         let mut capture = X11Capture::connect().expect("connect");
         let (width, _) = capture.screen_size();
         let region = Region {
@@ -299,6 +302,7 @@ mod tests {
     #[test]
     #[ignore = "needs an X11 display; run through `scripts/dev.sh test`"]
     fn connecting_fails_clearly_when_the_display_does_not_exist() {
+        let _display = crate::x11_test_lock();
         // SAFETY: tests that read DISPLAY are the ignored ones above, which run in a separate
         // invocation per `--test-threads`; restoring the value keeps them unaffected.
         let original = std::env::var("DISPLAY").ok();
