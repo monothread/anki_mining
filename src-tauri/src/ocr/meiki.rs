@@ -6,6 +6,7 @@ use ort::environment::Environment;
 use ort::session::Session;
 use ort::value::Tensor;
 
+use super::layout::block_around;
 use super::pipeline::{
     assemble_line, decode_detection, prepare_detection, prepare_line, segment_candidates,
     Candidate, LineInput, RecognitionInput, DET_HEIGHT, DET_MAX_BOXES, DET_WIDTH, REC_HEIGHT,
@@ -176,13 +177,30 @@ impl OcrEngine for MeikiEngine {
         if image.width() == 0 || image.height() == 0 {
             return Ok(Vec::new());
         }
-        let near: Vec<[i32; 4]> = self
-            .detect(image)?
-            .into_iter()
-            .filter(|bbox| is_near(*bbox, cursor))
-            .collect();
-        self.read_boxes(image, near)
+        let boxes = self.detect(image)?;
+        let wanted = blocks_near(&boxes, cursor);
+        self.read_boxes(
+            image,
+            wanted.into_iter().map(|index| boxes[index]).collect(),
+        )
     }
+}
+
+/// Indices of the detected lines near `cursor` and of the lines that share a block with them (a
+/// two-line subtitle is read as a whole), in reading order.
+fn blocks_near(boxes: &[[i32; 4]], cursor: (i32, i32)) -> Vec<usize> {
+    let mut wanted: Vec<usize> = Vec::new();
+    for (index, bbox) in boxes.iter().enumerate() {
+        if is_near(*bbox, cursor) {
+            for member in block_around(boxes, index) {
+                if !wanted.contains(&member) {
+                    wanted.push(member);
+                }
+            }
+        }
+    }
+    wanted.sort_by_key(|index| boxes[*index][1]);
+    wanted
 }
 
 /// Whether the cursor is on the line or close enough to pick one of its characters.
@@ -425,6 +443,40 @@ mod tests {
     }
 
     #[test]
+    fn recognize_near_reads_every_line_of_a_multi_line_subtitle() {
+        let subtitle = load("twoline_1080p.png");
+        let lines = recognize(&subtitle);
+        assert_eq!(lines.len(), 2);
+        let on_first = (
+            (lines[0].bbox[0] + lines[0].bbox[2]) / 2,
+            (lines[0].bbox[1] + lines[0].bbox[3]) / 2,
+        );
+        let on_second = (
+            (lines[1].bbox[0] + lines[1].bbox[2]) / 2,
+            (lines[1].bbox[1] + lines[1].bbox[3]) / 2,
+        );
+
+        let from_first = engine()
+            .lock()
+            .expect("lock")
+            .recognize_near(&subtitle, on_first)
+            .expect("near");
+        let from_second = engine()
+            .lock()
+            .expect("lock")
+            .recognize_near(&subtitle, on_second)
+            .expect("near");
+
+        assert_eq!(from_first.len(), 2);
+        assert_eq!(from_second.len(), 2);
+        assert_eq!(lines_to_text(&from_first), lines_to_text(&lines));
+        assert_eq!(
+            from_second[0].bbox, lines[0].bbox,
+            "lines come back top to bottom"
+        );
+    }
+
+    #[test]
     fn recognize_near_finds_nothing_when_the_cursor_is_far_from_any_text() {
         let (page, _) = two_paragraphs();
 
@@ -446,6 +498,28 @@ mod tests {
             .expect("near");
 
         assert_eq!(lines, vec![]);
+    }
+
+    #[test]
+    fn blocks_near_includes_the_stacked_lines_of_the_block_under_the_cursor() {
+        let boxes = [
+            [400, 900, 1400, 950],
+            [550, 970, 1250, 1020],
+            [100, 100, 500, 150],
+        ];
+
+        assert_eq!(blocks_near(&boxes, (900, 925)), vec![0, 1]);
+        assert_eq!(blocks_near(&boxes, (900, 995)), vec![0, 1]);
+        assert_eq!(blocks_near(&boxes, (300, 125)), vec![2]);
+        assert_eq!(blocks_near(&boxes, (1800, 500)), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn blocks_near_merges_blocks_without_duplicates_and_sorts_them_top_to_bottom() {
+        // The cursor is near both lines of a paragraph pair, whose boxes were detected unordered.
+        let boxes = [[300, 522, 1200, 538], [300, 500, 1200, 516]];
+
+        assert_eq!(blocks_near(&boxes, (700, 519)), vec![1, 0]);
     }
 
     #[test]

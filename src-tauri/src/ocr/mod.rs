@@ -1,5 +1,6 @@
 //! On-screen text recognition (Japanese), run locally with the bundled MeikiOCR models.
 
+pub mod layout;
 pub mod meiki;
 pub mod pipeline;
 mod raster;

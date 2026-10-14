@@ -50,6 +50,8 @@ pub struct Config {
     pub hover_key: TriggerKey,
     /// How long the cursor must rest in `auto` mode, in milliseconds.
     pub hover_dwell_ms: u64,
+    /// Whether the lookup under the mouse cursor is on when the app starts.
+    pub hover_enabled: bool,
     pub default_profile_id: String,
     pub profiles: Vec<Profile>,
 }
@@ -63,6 +65,7 @@ impl Default for Config {
             hover_mode: TriggerMode::Hold,
             hover_key: TriggerKey::Shift,
             hover_dwell_ms: DEFAULT_DWELL_MS,
+            hover_enabled: true,
             default_profile_id: DEFAULT_PROFILE_ID.to_string(),
             profiles: vec![default_profile()],
         }
@@ -230,6 +233,7 @@ mod tests {
         assert_eq!(config.hover_mode, TriggerMode::Hold);
         assert_eq!(config.hover_key, TriggerKey::Shift);
         assert_eq!(config.hover_dwell_ms, 300);
+        assert!(config.hover_enabled);
         assert_eq!(config.default_profile_id, "default");
         assert_eq!(config.profiles, vec![default_profile()]);
         assert_eq!(config.profiles[0].deck_name, "Mining");
@@ -247,6 +251,7 @@ mod tests {
         assert_eq!(value["hoverMode"], json!("hold"));
         assert_eq!(value["hoverKey"], json!("shift"));
         assert_eq!(value["hoverDwellMs"], json!(300));
+        assert_eq!(value["hoverEnabled"], json!(true));
         assert_eq!(value["defaultProfileId"], json!("default"));
         assert_eq!(value["profiles"][0]["deckName"], json!("Mining"));
     }
@@ -550,7 +555,7 @@ mod tests {
         let path = directory.path().join("config.json");
         fs::write(
             &path,
-            r#"{ "hoverMode": "auto", "hoverKey": "alt", "hoverDwellMs": 450 }"#,
+            r#"{ "hoverMode": "auto", "hoverKey": "alt", "hoverDwellMs": 450, "hoverEnabled": false }"#,
         )
         .expect("write");
 
@@ -559,6 +564,7 @@ mod tests {
         assert_eq!(config.hover_mode, TriggerMode::Auto);
         assert_eq!(config.hover_key, TriggerKey::Alt);
         assert_eq!(config.hover_dwell_ms, 450);
+        assert!(!config.hover_enabled);
     }
 
     #[test]

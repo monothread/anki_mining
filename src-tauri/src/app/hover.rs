@@ -1,6 +1,6 @@
 //! Runs the hover lookup: watches the mouse, reads the screen when triggered and shows the popup.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -46,22 +46,40 @@ pub struct HoverStatus {
     pub dwell_ms: u64,
 }
 
+/// Where changes made while the app runs are saved, and the settings they are merged into.
+struct ConfigStore {
+    path: PathBuf,
+    config: Mutex<Config>,
+}
+
 /// Shared between the hover thread and the commands that change its behavior.
 pub struct HoverControl {
     enabled: AtomicBool,
     trigger: Mutex<Trigger>,
     key: TriggerKey,
     dwell_ms: u64,
+    store: Option<ConfigStore>,
 }
 
 impl HoverControl {
     pub fn new(config: &Config) -> HoverControl {
         HoverControl {
-            enabled: AtomicBool::new(true),
+            enabled: AtomicBool::new(config.hover_enabled),
             trigger: Mutex::new(Trigger::new(config.hover_mode, config.hover_dwell_ms)),
             key: config.hover_key,
             dwell_ms: config.hover_dwell_ms,
+            store: None,
         }
+    }
+
+    /// Saves every later change to `path`, merged into `config` (the settings the app started
+    /// with), so the choice survives a restart.
+    pub fn with_persistence(mut self, path: &Path, config: Config) -> HoverControl {
+        self.store = Some(ConfigStore {
+            path: path.to_path_buf(),
+            config: Mutex::new(config),
+        });
+        self
     }
 
     pub fn status(&self) -> HoverStatus {
@@ -81,8 +99,11 @@ impl HoverControl {
         self.enabled.load(Ordering::SeqCst)
     }
 
-    pub fn set_enabled(&self, enabled: bool) {
+    /// Turns the lookup on or off. The change is applied even when saving it fails; the error
+    /// says why it will not survive a restart.
+    pub fn set_enabled(&self, enabled: bool) -> Result<(), String> {
         self.enabled.store(enabled, Ordering::SeqCst);
+        self.persist(|config| config.hover_enabled = enabled)
     }
 
     pub fn mode(&self) -> TriggerMode {
@@ -91,10 +112,27 @@ impl HoverControl {
             .map_or(TriggerMode::Hold, |trigger| trigger.mode())
     }
 
-    pub fn set_mode(&self, mode: TriggerMode) {
+    /// Switches the trigger. The change is applied even when saving it fails; the error says why
+    /// it will not survive a restart.
+    pub fn set_mode(&self, mode: TriggerMode) -> Result<(), String> {
         if let Ok(mut trigger) = self.trigger.lock() {
             trigger.set_mode(mode);
         }
+        self.persist(|config| config.hover_mode = mode)
+    }
+
+    fn persist(&self, change: impl FnOnce(&mut Config)) -> Result<(), String> {
+        let Some(store) = &self.store else {
+            return Ok(());
+        };
+        let mut config = store
+            .config
+            .lock()
+            .map_err(|_| "the settings are unavailable".to_string())?;
+        change(&mut config);
+        config
+            .save(&store.path)
+            .map_err(|error| format!("Could not save the setting: {error}"))
     }
 
     /// Feeds a pointer reading to the trigger.
@@ -356,11 +394,15 @@ mod tests {
     fn it_can_be_disabled_and_enabled_again() {
         let control = control();
 
-        control.set_enabled(false);
+        control
+            .set_enabled(false)
+            .expect("no store, nothing to save");
         assert!(!control.is_enabled());
         assert!(!control.status().enabled);
 
-        control.set_enabled(true);
+        control
+            .set_enabled(true)
+            .expect("no store, nothing to save");
         assert!(control.is_enabled());
     }
 
@@ -378,7 +420,9 @@ mod tests {
         assert_eq!(control.update(rest(0)), None);
         assert_eq!(control.update(rest(1_000)), None);
 
-        control.set_mode(TriggerMode::Auto);
+        control
+            .set_mode(TriggerMode::Auto)
+            .expect("no store, nothing to save");
         assert_eq!(control.mode(), TriggerMode::Auto);
         assert_eq!(control.update(rest(2_000)), None);
         assert_eq!(
@@ -424,5 +468,146 @@ mod tests {
         assert!(shown.keeps(380, 380));
         assert!(!shown.keeps(10, 10));
         assert!(!shown.keeps(1200, 900));
+    }
+
+    // --- persistence ---
+
+    fn saved(path: &Path) -> Config {
+        Config::load(path).expect("saved config")
+    }
+
+    #[test]
+    fn the_trigger_mode_is_saved_and_the_other_settings_are_kept() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("config.json");
+        let started_with = Config {
+            websocket_port: 7123,
+            hover_key: TriggerKey::Alt,
+            ..Config::default()
+        };
+        let control =
+            HoverControl::new(&started_with).with_persistence(&path, started_with.clone());
+
+        control.set_mode(TriggerMode::Auto).expect("save");
+
+        assert_eq!(
+            saved(&path),
+            Config {
+                hover_mode: TriggerMode::Auto,
+                ..started_with
+            }
+        );
+    }
+
+    #[test]
+    fn switching_the_lookup_off_and_on_is_saved() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("config.json");
+        let control =
+            HoverControl::new(&Config::default()).with_persistence(&path, Config::default());
+
+        control.set_enabled(false).expect("save");
+        assert!(!saved(&path).hover_enabled);
+
+        control.set_enabled(true).expect("save");
+        assert!(saved(&path).hover_enabled);
+    }
+
+    #[test]
+    fn changes_accumulate_in_the_saved_file() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("config.json");
+        let control =
+            HoverControl::new(&Config::default()).with_persistence(&path, Config::default());
+
+        control.set_mode(TriggerMode::Auto).expect("save");
+        control.set_enabled(false).expect("save");
+
+        let config = saved(&path);
+        assert_eq!(config.hover_mode, TriggerMode::Auto);
+        assert!(!config.hover_enabled);
+    }
+
+    #[test]
+    fn the_saved_settings_are_used_by_the_next_start() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("config.json");
+        let first =
+            HoverControl::new(&Config::default()).with_persistence(&path, Config::default());
+        first.set_mode(TriggerMode::Auto).expect("save");
+        first.set_enabled(false).expect("save");
+
+        let second = HoverControl::new(&saved(&path));
+
+        assert_eq!(
+            second.status(),
+            HoverStatus {
+                enabled: false,
+                mode: TriggerMode::Auto,
+                key: TriggerKey::Shift,
+                dwell_ms: DEFAULT_DWELL_MS,
+            }
+        );
+    }
+
+    #[test]
+    fn nothing_is_written_without_persistence() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let control = HoverControl::new(&Config::default());
+
+        control
+            .set_mode(TriggerMode::Auto)
+            .expect("nothing to save");
+        control.set_enabled(false).expect("nothing to save");
+
+        assert_eq!(std::fs::read_dir(directory.path()).expect("dir").count(), 0);
+    }
+
+    #[test]
+    fn a_failed_save_is_reported_but_the_change_still_applies() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let blocker = directory.path().join("blocker");
+        std::fs::write(&blocker, "x").expect("write");
+        let path = blocker.join("config.json");
+        let control =
+            HoverControl::new(&Config::default()).with_persistence(&path, Config::default());
+
+        let mode = control.set_mode(TriggerMode::Auto);
+        let enabled = control.set_enabled(false);
+
+        assert!(mode
+            .expect_err("mode")
+            .starts_with("Could not save the setting:"));
+        assert!(enabled
+            .expect_err("enabled")
+            .starts_with("Could not save the setting:"));
+        assert_eq!(control.mode(), TriggerMode::Auto);
+        assert!(!control.is_enabled());
+    }
+
+    #[test]
+    fn a_change_that_makes_the_config_invalid_is_not_written() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("config.json");
+        let invalid = Config {
+            websocket_port: 0,
+            ..Config::default()
+        };
+        let control = HoverControl::new(&invalid).with_persistence(&path, invalid.clone());
+
+        let outcome = control.set_mode(TriggerMode::Auto);
+
+        assert!(outcome.is_err());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn the_lookup_starts_off_when_the_config_says_so() {
+        let config = Config {
+            hover_enabled: false,
+            ..Config::default()
+        };
+
+        assert!(!HoverControl::new(&config).is_enabled());
     }
 }

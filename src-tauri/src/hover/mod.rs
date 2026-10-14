@@ -145,6 +145,7 @@ mod tests {
 
     use super::*;
     use crate::dictionary::Dictionary;
+    use crate::normalizer::clean_text;
     use crate::ocr::{MeikiEngine, OcrLine};
     use crate::text_offsets::utf16_offset_to_byte;
 
@@ -222,18 +223,22 @@ mod tests {
             .unwrap_or_else(|error| panic!("{error}; run scripts/fetch-ocr-models.sh"))
     }
 
-    /// A black Full HD screen with the subtitle fixture pasted near the bottom.
-    fn screen_with_subtitle() -> RgbImage {
+    /// A black Full HD screen with a subtitle fixture pasted near the bottom.
+    fn screen_with(fixture: &str) -> RgbImage {
         let band = image::open(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/ocr")
-                .join(FIXTURE),
+                .join(fixture),
         )
         .expect("fixture")
         .to_rgb8();
         let mut screen = RgbImage::from_pixel(SCREEN_WIDTH, SCREEN_HEIGHT, Rgb([0, 0, 0]));
         image::imageops::replace(&mut screen, &band, 0, i64::from(BAND_TOP));
         screen
+    }
+
+    fn screen_with_subtitle() -> RgbImage {
+        screen_with(FIXTURE)
     }
 
     fn dictionary_scan() -> impl Fn(&str, usize) -> Result<Vec<ScanResult>, String> {
@@ -552,5 +557,53 @@ mod tests {
         assert_eq!(char_index("😀猫が", 2), 1);
         assert_eq!(char_index("😀猫が", 3), 2);
         assert_eq!(char_index("猫", 5), 1);
+    }
+
+    #[test]
+    fn hovering_the_second_line_of_a_subtitle_uses_both_lines_as_the_sentence() {
+        let screen_image = screen_with("twoline_1080p.png");
+        let mut screen = FakeScreen(screen_image.clone());
+        let mut engine = real_engine();
+        let tokenizer = Tokenizer::new().expect("tokenizer");
+        let scan = dictionary_scan();
+        let lines = engine.recognize(&screen_image).expect("ocr");
+        assert_eq!(lines.len(), 2, "the fixture has two lines");
+        // 行 is the first character of the second line.
+        let cursor = center(lines[1].chars[0].bbox);
+
+        let result =
+            found(lookup_at(&mut screen, &mut engine, &tokenizer, &scan, cursor).expect("lookup"));
+
+        assert_eq!(
+            clean_text(&result.sentence),
+            "昨日、友達と映画を見に行きました。とても楽しかったです"
+        );
+        // The first line has 11 characters, so 行 is at offset 11.
+        assert_eq!(result.word_start, 11);
+        assert_eq!(result.results[0].source, "行きました");
+        assert_eq!(result.results[0].entries[0].entry.expression, "行く");
+        assert_eq!(result.line_bbox, lines[1].bbox);
+    }
+
+    #[test]
+    fn hovering_the_first_line_finds_a_word_that_ends_on_the_next_line_context() {
+        let screen_image = screen_with("twoline_1080p.png");
+        let mut screen = FakeScreen(screen_image.clone());
+        let mut engine = real_engine();
+        let tokenizer = Tokenizer::new().expect("tokenizer");
+        let scan = dictionary_scan();
+        let lines = engine.recognize(&screen_image).expect("ocr");
+        // 友 is the fourth character of the first line.
+        let cursor = center(lines[0].chars[3].bbox);
+
+        let result =
+            found(lookup_at(&mut screen, &mut engine, &tokenizer, &scan, cursor).expect("lookup"));
+
+        assert_eq!(result.word_start, 3);
+        assert_eq!(result.results[0].source, "友達");
+        assert_eq!(
+            clean_text(&result.sentence),
+            "昨日、友達と映画を見に行きました。とても楽しかったです"
+        );
     }
 }

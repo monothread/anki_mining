@@ -5,7 +5,7 @@
 **Last updated:** 2026-10-14
 **Version:** 0.1.0, first version published (hover lookup works on X11; Anki card creation deferred)
 **Current phase:** 3 done as a first version (OCR + hover lookup); Phase 1 done except the Anki parts (P1-13, P1-14), which are deferred by decision
-**Next step:** use the app day to day (YouTube, web pages, a desktop player, games) and fix what fails. Candidates, in rough order: multi-line subtitles as one sentence (P3-13), persist the trigger mode (P3-14), vertical text (P3-15), OCR tuning on real frames (P3-05), mpv exact-text source (P4-02). Anki work (P1-13 check, P1-14, Phase 5) stays last.
+**Next step:** keep using the app day to day and fix what fails. Candidates, in rough order: vertical text (P3-15), OCR tuning on real frames (P3-05), mpv exact-text source (P4-02). Anki work (P1-13 check, P1-14, Phase 5) stays last.
 
 ## Status per phase
 
@@ -58,9 +58,8 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 ## Known limitations
 - OCR can mix up text when subtitle layers overlap (e.g. the YouTube caption box drawn over another subtitle) and misread rare kanji in stylised broadcast fonts. The word under the cursor is usually still right; the sentence shown may be noisy.
 - Long lines get a stray `、` or `。` now and then at segment cuts and at the end of a line.
-- Trigger mode changed from the header is not saved; it resets to `hoverMode` in `config.json` on restart (P3-14).
 - The popup is informational for now (no Anki button, by decision).
-- Multi-line subtitles are read line by line: only the hovered line is used as the sentence (P3-13).
+- A text block is at most 3 lines (the hovered line plus one neighbour on each side), so a long paragraph gives a 3-line sentence.
 - Wayland: the global pointer position is not available to apps; solved in P6-03.
 - OCR accuracy was measured mostly on synthetic subtitles; real checks so far are three YouTube cases. Games and desktop players are still untested.
 - OCR does not read vertical text yet (P3-15).
@@ -79,6 +78,7 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 ## Session log
 | Date | Summary | Tasks completed |
 |---|---|---|
+| 2026-10-14 | P3-13 and P3-14. Multi-line text: `ocr::layout` groups stacked lines of similar height and overlapping width into blocks (max 3 lines); `recognize_near` reads the whole block near the cursor and `character_at` joins its lines into one sentence with the right UTF-16 offset (a word may start on one line and end on the next). Real-OCR tests on a generated two-line subtitle (`twoline_1080p.png`). The trigger mode and the on/off switch changed from the header are saved to `config.json` (`hoverMode`, `hoverEnabled`); a file that could not be read is never overwritten and a failed save is reported while the change still applies. 426 Rust + 112 Vitest tests | P3-13, P3-14 |
 | 2026-10-14 | **First version published** to https://github.com/monothread/anki_mining: README written, architecture doc rewritten to match the code, docs updated, models/ONNX Runtime/dictionary kept out of git (downloaded by `scripts/fetch-ocr-models.sh` and by the user) | — |
 | 2026-10-14 | Market research, architecture choice and documentation | — |
 | 2026-10-14 | Docker build/test environment (ADR-008). Image built; verified Node 22, Rust 1.99 + clippy, webkit2gtk-4.1, gtk3, xvfb; container runs as host UID and writes to the workspace. `appimage` command not yet exercised (needs the P1-01 scaffold) | P1-00 |

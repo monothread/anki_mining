@@ -63,15 +63,31 @@ fn get_hover(control: State<'_, Arc<HoverControl>>) -> HoverStatus {
 }
 
 #[tauri::command]
-fn set_hover_mode(control: State<'_, Arc<HoverControl>>, mode: TriggerMode) -> HoverStatus {
-    control.set_mode(mode);
+fn set_hover_mode(
+    app: AppHandle,
+    control: State<'_, Arc<HoverControl>>,
+    mode: TriggerMode,
+) -> HoverStatus {
+    report_save_error(&app, control.set_mode(mode));
     control.status()
 }
 
 #[tauri::command]
-fn set_hover_enabled(control: State<'_, Arc<HoverControl>>, enabled: bool) -> HoverStatus {
-    control.set_enabled(enabled);
+fn set_hover_enabled(
+    app: AppHandle,
+    control: State<'_, Arc<HoverControl>>,
+    enabled: bool,
+) -> HoverStatus {
+    report_save_error(&app, control.set_enabled(enabled));
     control.status()
+}
+
+/// A setting that could not be saved still applies for this run; the user is told why it will
+/// not be remembered.
+fn report_save_error(app: &AppHandle, outcome: Result<(), String>) {
+    if let Err(message) = outcome {
+        let _ = app.emit(ERROR_EVENT, message);
+    }
 }
 
 #[tauri::command]
@@ -214,7 +230,8 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
 
-    let config = load_config(&config_dir.join(CONFIG_FILE), &mut warnings);
+    let config_path = config_dir.join(CONFIG_FILE);
+    let (config, config_loaded) = load_config(&config_path, &mut warnings);
     let dictionary = Dictionary::open(&data_dir.join(DICTIONARY_FILE))?;
     let tokenizer = Arc::new(Tokenizer::new()?);
 
@@ -233,7 +250,12 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     };
     register_hotkey(app, &config.mining_hotkey, &mut warnings);
 
-    let hover_control = Arc::new(HoverControl::new(&config));
+    // A settings file that could not be read is never overwritten by a change made in the app.
+    let mut control = HoverControl::new(&config);
+    if config_loaded {
+        control = control.with_persistence(&config_path, config.clone());
+    }
+    let hover_control = Arc::new(control);
     spawn_pipeline(app.clone(), receiver, Arc::clone(&tokenizer));
     app.manage(TextSink(sender));
     app.manage(RunningSources(Mutex::new(sources)));
@@ -252,12 +274,13 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn load_config(path: &Path, warnings: &mut Vec<String>) -> Config {
+/// The settings, and whether they came from a readable file (or there was none yet).
+fn load_config(path: &Path, warnings: &mut Vec<String>) -> (Config, bool) {
     match Config::load(path) {
-        Ok(config) => config,
+        Ok(config) => (config, true),
         Err(error) => {
             warnings.push(format!("{error}; using the default settings"));
-            Config::default()
+            (Config::default(), false)
         }
     }
 }

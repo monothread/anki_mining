@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 
+use crate::ocr::layout::block_around;
 use crate::ocr::OcrLine;
 use crate::types::token::Token;
 
@@ -15,13 +16,14 @@ pub const LINE_MARGIN: i32 = 6;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CharacterHit {
-    /// Text of the line (the sentence the word belongs to).
+    /// Text of the block the line belongs to: the lines of a multi-line subtitle joined together
+    /// (the sentence the word belongs to).
     pub text: String,
     /// Offset of the character in `text`, in UTF-16 code units.
     pub offset: usize,
     /// `[x1, y1, x2, y2]` of the character, in screen pixels.
     pub char_bbox: [i32; 4],
-    /// `[x1, y1, x2, y2]` of the line, in screen pixels.
+    /// `[x1, y1, x2, y2]` of the hovered line, in screen pixels.
     pub line_bbox: [i32; 4],
 }
 
@@ -29,13 +31,14 @@ pub struct CharacterHit {
 /// nearest one wins; within a line the nearest character wins if it is close enough.
 pub fn character_at(lines: &[OcrLine], cursor: (i32, i32)) -> Option<CharacterHit> {
     let (cursor_x, cursor_y) = cursor;
-    let line = lines
+    let (line_index, line) = lines
         .iter()
-        .filter(|line| {
+        .enumerate()
+        .filter(|(_, line)| {
             let [_, top, _, bottom] = line.bbox;
             cursor_y >= top - LINE_MARGIN && cursor_y <= bottom + LINE_MARGIN
         })
-        .min_by_key(|line| {
+        .min_by_key(|(_, line)| {
             let [left, top, right, bottom] = line.bbox;
             // Closest vertically first; for lines at the same height, the closest horizontally.
             (
@@ -55,16 +58,33 @@ pub fn character_at(lines: &[OcrLine], cursor: (i32, i32)) -> Option<CharacterHi
         return None;
     }
 
-    let offset: usize = line.chars[..index]
+    let offset_in_line: usize = line.chars[..index]
         .iter()
         .map(|ocr_char| ocr_char.character.len_utf16())
         .sum();
+    let (text, offset_of_line) = join_block(lines, line_index);
     Some(CharacterHit {
-        text: line.text.clone(),
-        offset,
+        text,
+        offset: offset_of_line + offset_in_line,
         char_bbox: line.chars[index].bbox,
         line_bbox: line.bbox,
     })
+}
+
+/// The text of the block around `lines[line_index]` (its lines top to bottom, joined without
+/// separators as Japanese has no spaces) and where the line itself starts in that text, in UTF-16
+/// code units.
+fn join_block(lines: &[OcrLine], line_index: usize) -> (String, usize) {
+    let boxes: Vec<[i32; 4]> = lines.iter().map(|line| line.bbox).collect();
+    let mut text = String::new();
+    let mut offset_of_line = 0;
+    for member in block_around(&boxes, line_index) {
+        if member == line_index {
+            offset_of_line = text.encode_utf16().count();
+        }
+        text.push_str(&lines[member].text);
+    }
+    (text, offset_of_line)
 }
 
 /// 0 when `x` is inside the box, otherwise the distance to its nearest side.
@@ -190,14 +210,15 @@ mod tests {
             line("下の行", 100, 953, 40, 50),
         ];
 
-        assert_eq!(
-            character_at(&lines, (120, 948)).expect("hit").text,
-            "上の行"
-        );
-        assert_eq!(
-            character_at(&lines, (120, 958)).expect("hit").text,
-            "下の行"
-        );
+        let upper = character_at(&lines, (120, 948)).expect("hit");
+        let lower = character_at(&lines, (120, 958)).expect("hit");
+
+        // The lines are stacked, so both belong to one sentence; the hovered line decides where.
+        assert_eq!(upper.line_bbox, lines[0].bbox);
+        assert_eq!(upper.offset, 0);
+        assert_eq!(lower.line_bbox, lines[1].bbox);
+        assert_eq!(lower.offset, 3);
+        assert_eq!(lower.text, "上の行下の行");
     }
 
     #[test]
@@ -205,6 +226,93 @@ mod tests {
         let lines = [line("左", 100, 900, 40, 50), line("右", 900, 900, 40, 50)];
 
         assert_eq!(character_at(&lines, (905, 920)).expect("hit").text, "右");
+    }
+
+    #[test]
+    fn the_lines_of_a_two_line_subtitle_are_joined_into_one_sentence() {
+        let lines = [
+            line("昨日、友達と映画を", 400, 900, 40, 50),
+            line("見に行きました。", 560, 970, 40, 50),
+        ];
+
+        let on_first = character_at(&lines, (420, 920)).expect("first line");
+        let on_second = character_at(&lines, (580, 990)).expect("second line");
+
+        assert_eq!(on_first.text, "昨日、友達と映画を見に行きました。");
+        assert_eq!(on_second.text, "昨日、友達と映画を見に行きました。");
+        assert_eq!(on_first.offset, 0);
+        // 見 is the first character of the second line, after the nine characters of the first.
+        assert_eq!(on_second.offset, 9);
+        assert_eq!(on_first.line_bbox, lines[0].bbox);
+        assert_eq!(on_second.line_bbox, lines[1].bbox);
+    }
+
+    #[test]
+    fn the_offset_in_the_second_line_adds_the_length_of_the_first() {
+        let lines = [
+            line("猫が", 400, 900, 40, 50),
+            line("好きです", 400, 970, 40, 50),
+        ];
+
+        // き is the second character of the second line.
+        let hit = character_at(&lines, (400 + 40 + 5, 990)).expect("hit");
+
+        assert_eq!(hit.text, "猫が好きです");
+        assert_eq!(hit.offset, 3);
+    }
+
+    #[test]
+    fn a_word_split_across_two_lines_can_be_found_from_either_half() {
+        let lines = [
+            line("映", 400, 900, 40, 50),
+            line("画を見る", 400, 970, 40, 50),
+        ];
+
+        assert_eq!(
+            character_at(&lines, (410, 920)).expect("first").text,
+            "映画を見る"
+        );
+        assert_eq!(character_at(&lines, (410, 990)).expect("second").offset, 1);
+    }
+
+    #[test]
+    fn the_offset_counts_utf16_units_of_the_lines_before_the_hovered_one() {
+        let lines = [
+            line("😀猫", 400, 900, 40, 50),
+            line("が好き", 400, 970, 40, 50),
+        ];
+
+        let hit = character_at(&lines, (410, 990)).expect("hit");
+
+        assert_eq!(hit.text, "😀猫が好き");
+        // The emoji takes two UTF-16 units, so the second line starts at offset 3.
+        assert_eq!(hit.offset, 3);
+    }
+
+    #[test]
+    fn unrelated_lines_elsewhere_are_not_joined() {
+        let lines = [
+            line("猫が好き", 400, 900, 40, 50),
+            line("別の場所", 100, 100, 40, 50),
+        ];
+
+        assert_eq!(
+            character_at(&lines, (410, 920)).expect("hit").text,
+            "猫が好き"
+        );
+    }
+
+    #[test]
+    fn a_paragraph_contributes_the_hovered_line_and_its_neighbours_only() {
+        let lines: Vec<OcrLine> = (0..6)
+            .map(|row| line(&format!("行{row}"), 300, 500 + row * 22, 16, 16))
+            .collect();
+
+        let hit = character_at(&lines, (310, 500 + 3 * 22 + 8)).expect("hit");
+
+        assert_eq!(hit.text, "行2行3行4");
+        // 行3 starts after the two characters of 行2.
+        assert_eq!(hit.offset, 2);
     }
 
     #[test]
