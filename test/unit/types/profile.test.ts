@@ -44,7 +44,7 @@ describe('DEFAULT_FIELD_MAPPING', () => {
             deckName: 'Youtube',
             modelName: 'AnkiMining',
             fieldMapping: DEFAULT_FIELD_MAPPING,
-            match: { sourceId: 'browser-extension', appName: null },
+            match: { sourceId: 'browser-extension', appName: null, windowTitle: null },
         };
 
         expect(profile.fieldMapping.sentenceAudio).toBe('SentenceAudio');

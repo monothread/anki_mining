@@ -1,6 +1,8 @@
 import type { HoverResult, HoverStatus } from '../../src/types/hover';
 import type { DeinflectedEntry, ScanResult } from '../../src/types/scan';
 import type { Sentence } from '../../src/types/sentence';
+import { DEFAULT_FIELD_MAPPING } from '../../src/types/profile';
+import type { MiningSettings } from '../../src/types/settings';
 import type { Status } from '../../src/types/status';
 
 export const SENTENCE: Sentence = {
@@ -83,4 +85,22 @@ export const HOVER_RESULT: HoverResult = {
     charBbox: [160, 700, 200, 750],
     lineBbox: [40, 700, 760, 750],
     vertical: false,
+};
+
+export const SETTINGS: MiningSettings = {
+    defaultProfileId: 'default',
+    profiles: [
+        {
+            id: 'default',
+            name: 'Default',
+            deckName: 'Mining',
+            modelName: 'AnkiMining',
+            fieldMapping: { ...DEFAULT_FIELD_MAPPING },
+            match: { sourceId: null, appName: null, windowTitle: null },
+        },
+    ],
+    screenshotOnCards: true,
+    audioOnCards: true,
+    audioSeconds: 8,
+    duplicatePolicy: 'skip',
 };

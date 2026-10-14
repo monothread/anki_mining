@@ -6,6 +6,7 @@ import type { MineResult } from '../types/mine';
 import type { Region } from '../types/region';
 import type { ScanResult } from '../types/scan';
 import type { Sentence } from '../types/sentence';
+import type { MiningSettings } from '../types/settings';
 import type { ImportStats, Status } from '../types/status';
 
 /** Removes the event subscription it was returned for. */
@@ -17,6 +18,9 @@ export interface Backend {
     getHover: () => Promise<HoverStatus>;
     setHoverMode: (mode: TriggerMode) => Promise<HoverStatus>;
     setHoverEnabled: (enabled: boolean) => Promise<HoverStatus>;
+    getSettings: () => Promise<MiningSettings>;
+    /** Saves the settings; rejects with the reason when they are not valid. */
+    saveSettings: (settings: MiningSettings) => Promise<MiningSettings>;
     scanAt: (sentence: string, start: number) => Promise<ScanResult[]>;
     mine: (input: CardInput, profileId: string | null) => Promise<number>;
     importDictionary: (path: string) => Promise<ImportStats>;
@@ -47,6 +51,12 @@ export const tauriBackend: Backend = {
     },
     setHoverEnabled: async (enabled) => {
         return invoke<HoverStatus>('set_hover_enabled', { enabled });
+    },
+    getSettings: async () => {
+        return invoke<MiningSettings>('get_settings');
+    },
+    saveSettings: async (settings) => {
+        return invoke<MiningSettings>('save_settings', { settings });
     },
     scanAt: async (sentence, start) => {
         return invoke<ScanResult[]>('scan_at', { sentence, start });

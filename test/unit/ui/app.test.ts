@@ -4,7 +4,7 @@ import { createApp, describeHoverMode } from '../../../src/ui/app';
 import type { ScanResult } from '../../../src/types/scan';
 import type { FakeBackend } from '../../support/fakeBackend';
 import { createFakeBackend } from '../../support/fakeBackend';
-import { CAT_ENTRY, CAT_RESULT, EAT_RESULT, HOVER, SENTENCE, STATUS } from '../../support/fixtures';
+import { CAT_ENTRY, CAT_RESULT, EAT_RESULT, HOVER, SENTENCE, SETTINGS, STATUS } from '../../support/fixtures';
 
 interface Mounted {
     root: HTMLElement;
@@ -695,5 +695,82 @@ describe('createApp screen reading controls', () => {
         view.dispose();
 
         expect(fake.unsubscribes.region).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('createApp settings', () => {
+    it('opens the settings in place of the sentence and loads them from the backend', async () => {
+        const { root, fake } = await mount();
+
+        root.querySelector<HTMLButtonElement>('#open-settings')?.click();
+        await vi.waitFor(() => {
+            expect(root.querySelector<HTMLElement>('#settings')?.hidden).toBe(false);
+        });
+
+        expect(fake.backend.getSettings).toHaveBeenCalledTimes(1);
+        expect(root.querySelector<HTMLElement>('#sentence')?.hidden).toBe(true);
+        expect(root.querySelectorAll('.profile')).toHaveLength(1);
+    });
+
+    it('saves the settings, says so and closes the panel', async () => {
+        const { root, fake } = await mount();
+        root.querySelector<HTMLButtonElement>('#open-settings')?.click();
+        await vi.waitFor(() => {
+            expect(root.querySelector('.save-settings')).not.toBeNull();
+        });
+
+        root.querySelector<HTMLButtonElement>('.save-settings')?.click();
+        await vi.waitFor(() => {
+            expect(text(root, '#message')).toBe('Settings saved');
+        });
+
+        expect(fake.backend.saveSettings).toHaveBeenCalledWith(SETTINGS);
+        expect(root.querySelector<HTMLElement>('#settings')?.hidden).toBe(true);
+        expect(root.querySelector<HTMLElement>('#sentence')?.hidden).toBe(false);
+    });
+
+    it('keeps the panel open and shows the reason when saving fails', async () => {
+        const { root, fake } = await mount((created) => {
+            vi.mocked(created.backend.saveSettings).mockRejectedValue('profile `x` has an empty deckName');
+        });
+        root.querySelector<HTMLButtonElement>('#open-settings')?.click();
+        await vi.waitFor(() => {
+            expect(root.querySelector('.save-settings')).not.toBeNull();
+        });
+
+        root.querySelector<HTMLButtonElement>('.save-settings')?.click();
+        await vi.waitFor(() => {
+            expect(text(root, '#message')).toBe('profile `x` has an empty deckName');
+        });
+
+        expect(fake.backend.saveSettings).toHaveBeenCalledTimes(1);
+        expect(root.querySelector<HTMLElement>('#settings')?.hidden).toBe(false);
+    });
+
+    it('closes with the button and again with the Settings button', async () => {
+        const { root } = await mount();
+        const open = root.querySelector<HTMLButtonElement>('#open-settings');
+        open?.click();
+        await vi.waitFor(() => {
+            expect(root.querySelector<HTMLElement>('#settings')?.hidden).toBe(false);
+        });
+
+        open?.click();
+
+        expect(root.querySelector<HTMLElement>('#settings')?.hidden).toBe(true);
+        expect(root.querySelector('.profile')).toBeNull();
+    });
+
+    it('shows the reason when the settings cannot be loaded', async () => {
+        const { root } = await mount((created) => {
+            vi.mocked(created.backend.getSettings).mockRejectedValue('settings unavailable');
+        });
+
+        root.querySelector<HTMLButtonElement>('#open-settings')?.click();
+        await vi.waitFor(() => {
+            expect(text(root, '#message')).toBe('settings unavailable');
+        });
+
+        expect(root.querySelector<HTMLElement>('#settings')?.hidden).toBe(true);
     });
 });

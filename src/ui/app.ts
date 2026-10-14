@@ -7,6 +7,7 @@ import type { Sentence } from '../types/sentence';
 import type { Status } from '../types/status';
 import type { Token } from '../types/token';
 import { renderLookup } from './lookupView';
+import { renderSettings } from './settingsView';
 import { markSelected, renderSentence } from './sentenceView';
 
 /** Label of the button that switches how lookups start (the other mode is what a click gives). */
@@ -49,6 +50,7 @@ const TEMPLATE = `
     <span class="actions">
         <button type="button" id="hover-mode" class="action" title="How a lookup under the mouse starts"></button>
         <button type="button" id="hover-toggle" class="action"></button>
+        <button type="button" id="open-settings" class="action">Settings</button>
         <button type="button" id="select-area" class="action">Read screen area</button>
         <button type="button" id="stop-area" class="action" hidden>Stop reading</button>
     </span>
@@ -60,6 +62,7 @@ const TEMPLATE = `
         <button type="submit">Import</button>
     </form>
 </section>
+<section id="settings" class="settings" hidden></section>
 <main id="sentence" class="sentence">Pause the video and move the mouse over a Japanese subtitle, or copy text, or paste it below.</main>
 <section id="lookup" class="lookup"></section>
 <footer class="footer">
@@ -91,6 +94,8 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
     const lookupElement = requireElement(root, '#lookup', HTMLElement);
     const messageElement = requireElement(root, '#message', HTMLElement);
     const hoverModeButton = requireElement(root, '#hover-mode', HTMLButtonElement);
+    const settingsButton = requireElement(root, '#open-settings', HTMLButtonElement);
+    const settingsElement = requireElement(root, '#settings', HTMLElement);
     const hoverToggleButton = requireElement(root, '#hover-toggle', HTMLButtonElement);
     const selectAreaButton = requireElement(root, '#select-area', HTMLButtonElement);
     const stopAreaButton = requireElement(root, '#stop-area', HTMLButtonElement);
@@ -190,6 +195,44 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
         }
         await mineEntry(selection, selection.results[0], first);
     };
+
+    const closeSettings = (): void => {
+        settingsElement.hidden = true;
+        settingsElement.replaceChildren();
+        sentenceElement.hidden = false;
+        lookupElement.hidden = false;
+    };
+
+    const openSettings = async (): Promise<void> => {
+        const settings = await backend.getSettings();
+        sentenceElement.hidden = true;
+        lookupElement.hidden = true;
+        settingsElement.hidden = false;
+        renderSettings(settingsElement, settings, {
+            onSave: (changed) => {
+                void backend
+                    .saveSettings(changed)
+                    .then(() => {
+                        showMessage('Settings saved', 'success');
+                        closeSettings();
+                    })
+                    .catch((error: unknown) => {
+                        showMessage(String(error), 'error');
+                    });
+            },
+            onCancel: closeSettings,
+        });
+    };
+
+    settingsButton.addEventListener('click', () => {
+        if (!settingsElement.hidden) {
+            closeSettings();
+            return;
+        }
+        void openSettings().catch((error: unknown) => {
+            showMessage(String(error), 'error');
+        });
+    });
 
     hoverModeButton.addEventListener('click', () => {
         if (hover === null) {

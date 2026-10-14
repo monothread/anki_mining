@@ -3,7 +3,7 @@ import type { Backend, Unsubscribe } from '../../src/ipc/backend';
 import type { MineResult } from '../../src/types/mine';
 import type { Region } from '../../src/types/region';
 import type { Sentence } from '../../src/types/sentence';
-import { CAT_RESULT, HOVER, STATUS } from './fixtures';
+import { CAT_RESULT, HOVER, SETTINGS, STATUS } from './fixtures';
 
 export interface FakeBackend {
     backend: Backend;
@@ -60,6 +60,10 @@ export function createFakeBackend(): FakeBackend {
         }),
         setHoverEnabled: vi.fn<Backend['setHoverEnabled']>().mockImplementation((enabled) => {
             return Promise.resolve({ ...HOVER, enabled });
+        }),
+        getSettings: vi.fn<Backend['getSettings']>().mockResolvedValue(SETTINGS),
+        saveSettings: vi.fn<Backend['saveSettings']>().mockImplementation((settings) => {
+            return Promise.resolve(settings);
         }),
         scanAt: vi.fn<Backend['scanAt']>().mockResolvedValue([CAT_RESULT]),
         mine: vi.fn<Backend['mine']>().mockResolvedValue(1234),
