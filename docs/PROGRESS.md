@@ -5,7 +5,7 @@
 **Last updated:** 2026-10-14
 **Version:** 0.1.0, first version published (hover lookup works on X11; Anki card creation deferred)
 **Current phase:** Phase 1 and Phase 3 done (hover lookup and a first Anki flow: add the word from the popup); Phase 2 (media) next
-**Next step:** Phase 5: profiles (deck/note type per source or application), field-mapping, duplicate handling (`canAddNotes` + policy), then Phase 6 (pitch accent, frequency, Yomitan dictionaries, packaging). Media on cards is done (screenshot, audio). Also pending: try the Anki flow against a real Anki.
+**Next step:** Phase 6: pitch accent and frequency, Yomitan dictionary import, Wayland backends and packaging (Flatpak, release). Also pending: try the Anki flow against a real Anki; exact subtitle timing for audio clips (P4-03).
 
 ## Status per phase
 
@@ -15,7 +15,7 @@
 | 2 | Media on cards (audio + screenshot) — after Phase 3 | Not started |
 | 3 | Screen OCR + hover lookup (core) | First version done and verified on the real desktop (YouTube, TV banner) and headless; P3-05 (preprocessing) open and optional |
 | 4 | mpv exact subtitles (no browser extension, user decision) | In progress (P4-02 done) |
-| 5 | Profiles and decks per source | Not started |
+| 5 | Profiles and decks per source | Done |
 | 6 | Polish (pitch, frequency, packaging) | Not started |
 
 Legend: Not started · In progress · Blocked · Done
@@ -106,6 +106,7 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 | 2026-10-14 | Card builder (`cards/`), `text_offsets`, `Config.mining_hotkey`, app layer (`app/`: `AppState`, sentence `pipeline`, Tauri commands `get_status`, `scan_at`, `mine`, `import_dictionary`, `submit_text`, global shortcut event `mine-hotkey`) and frontend (`src/ui/`, `src/ipc/backend.ts`, `src/cards/`, styles). Frontend is a transparent always-on-top undecorated window. 230 Rust tests + 65 Vitest tests, tsc/eslint/clippy clean. NOT yet verified visually or end to end in the real app | (P1-10, P1-11, P1-13 pending visual check) |
 | 2026-10-14 | P2-01: cards get a JPEG screenshot (max 1280 px wide) of the window under the cursor, captured with the lookup; `screenshotOnCards` config. Browser extension dropped by user decision | — |
 | 2026-10-14 | P2-02..P2-05 sentence audio (ADR-007): `audio/` records the default output with `parec` into a 60 s buffer, cuts the last speech (silence trimmed) and encodes WAV; `audioOnCards`/`audioSeconds` config; `AppState::mine_from_hover` attaches it. The X11 tests no longer change `$DISPLAY` (they were flaky). 525 Rust tests | P2-02, P2-03, P2-04, P2-05 |
+| 2026-10-14 | Phase 5 (ADR-012): `profiles::resolve` (rules: source, application class, window title; most rules wins), the window under the cursor is identified with `WM_CLASS`/`_NET_WM_NAME` (`PointerTracker::identify_window_under_pointer`), `duplicatePolicy` (skip/allow), `ConfigFile` shared by every writer, commands `get_settings`/`save_settings` and the Settings panel (profiles, field mapping, media, duplicates). e2e: with a profile for the `display-im6.q16` class (`E2E_WINDOW=1 E2E_CONFIG=...` for `scripts/e2e-mine.sh`) the card went to that profile's deck. Xvfb now runs with `-noreset`: it reset when the last client left and made the X11 tests flaky. 549 Rust + 136 Vitest tests | P5-01..P5-04 |
 
 ## Backlog (ideas outside the current scope)
 - Visual signal when a word is identified. Decided to leave it as is (the popup is the signal). The cursor shape cannot be changed over other apps' windows on X11; if wanted later, the clean option is a click-through highlight frame over the word, the alternatives (pointer grab, an input-capturing window) block clicks.

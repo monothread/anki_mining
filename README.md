@@ -19,6 +19,14 @@ computer's audio output with `parec`, which comes with PulseAudio and PipeWire).
 `screenshotOnCards: false` or `audioOnCards: false` in `config.json`; `audioSeconds` sets the longest clip. Duplicates are
 refused. The popup tells you what happened.
 
+## Decks per application (profiles)
+
+Open **Settings** to choose where cards go. A profile has a deck, a note type, a field mapping and rules that
+decide when it is used: the application (its window class, e.g. `mpv` or `Navigator`), a word in the window title
+(e.g. `YouTube`, to tell sites apart in a browser) and the text source. The profile with the most matching rules
+wins; the default profile is used when none matches. You can also choose whether the card is refused or added
+again when it already exists in the deck.
+
 ## How it works
 
 ```

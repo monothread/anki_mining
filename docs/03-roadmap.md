@@ -63,10 +63,10 @@ The product must work after installing a single app, with no browser extension o
 
 ## Phase 5 — Profiles and decks per source
 **Acceptance criteria:** mining on YouTube goes to the "Youtube" deck; in game X, to the "Games" deck.
-- [ ] P5-01 — `ProfileResolver` (by application/window/source)
-- [ ] P5-02 — Profile configuration UI and field mapping
-- [ ] P5-03 — Duplicate detection (`canAddNotes`) and policy (skip/update)
-- [ ] P5-04 — E2E tests
+- [x] P5-01 — `ProfileResolver` (by application/window/source)
+- [x] P5-02 — Profile configuration UI and field mapping
+- [x] P5-03 — Duplicate detection (`canAddNotes`) and policy (skip/update)
+- [x] P5-04 — E2E tests
 
 ## Phase 6 — Polish
 - [ ] P6-01 — Pitch accent and frequency (Yomitan-format dictionaries)
