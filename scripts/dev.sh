@@ -54,7 +54,7 @@ case "${command}" in
         run_in_container bash -c "npx eslint src/ test/ --max-warnings=0 && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings"
         ;;
     test)
-        run_in_container xvfb-run --auto-servernum bash -c "npm test && cargo test --manifest-path src-tauri/Cargo.toml -- --include-ignored"
+        run_in_container xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24 -noreset" bash -c "npm test && cargo test --manifest-path src-tauri/Cargo.toml -- --include-ignored"
         ;;
     appimage)
         run_in_container bash -c "npx tauri build --bundles appimage && cp src-tauri/target/release/bundle/appimage/*.AppImage dist/"

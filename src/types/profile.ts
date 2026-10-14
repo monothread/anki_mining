@@ -30,6 +30,8 @@ export const DEFAULT_FIELD_MAPPING: FieldMapping = {
 export interface ProfileMatch {
     sourceId: string | null;
     appName: string | null;
+    /** Part of the window title (any case). */
+    windowTitle: string | null;
 }
 
 export interface Profile {

@@ -10,6 +10,7 @@ pub mod media;
 pub mod normalizer;
 pub mod ocr;
 pub mod pointer;
+pub mod profiles;
 pub mod sources;
 pub mod text_offsets;
 pub mod tokenizer;

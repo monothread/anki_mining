@@ -61,6 +61,8 @@ pub struct Config {
     pub audio_on_cards: bool,
     /// The longest audio clip put on a card, in seconds.
     pub audio_seconds: u32,
+    /// What to do when the card already exists in the deck.
+    pub duplicate_policy: DuplicatePolicy,
     pub default_profile_id: String,
     pub profiles: Vec<Profile>,
 }
@@ -79,10 +81,21 @@ impl Default for Config {
             screenshot_on_cards: true,
             audio_on_cards: true,
             audio_seconds: 8,
+            duplicate_policy: DuplicatePolicy::Skip,
             default_profile_id: DEFAULT_PROFILE_ID.to_string(),
             profiles: vec![default_profile()],
         }
     }
+}
+
+/// What happens when the card to add is already in the deck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DuplicatePolicy {
+    /// The card is not added and the user is told.
+    Skip,
+    /// The card is added again.
+    Allow,
 }
 
 pub fn default_profile() -> Profile {
@@ -95,6 +108,7 @@ pub fn default_profile() -> Profile {
         r#match: ProfileMatch {
             source_id: None,
             app_name: None,
+            window_title: None,
         },
     }
 }
@@ -257,6 +271,7 @@ mod tests {
         assert!(config.screenshot_on_cards);
         assert!(config.audio_on_cards);
         assert_eq!(config.audio_seconds, 8);
+        assert_eq!(config.duplicate_policy, DuplicatePolicy::Skip);
         assert_eq!(config.default_profile_id, "default");
         assert_eq!(config.profiles, vec![default_profile()]);
         assert_eq!(config.profiles[0].deck_name, "Mining");
@@ -279,6 +294,7 @@ mod tests {
         assert_eq!(value["screenshotOnCards"], json!(true));
         assert_eq!(value["audioOnCards"], json!(true));
         assert_eq!(value["audioSeconds"], json!(8));
+        assert_eq!(value["duplicatePolicy"], json!("skip"));
         assert_eq!(value["defaultProfileId"], json!("default"));
         assert_eq!(value["profiles"][0]["deckName"], json!("Mining"));
     }

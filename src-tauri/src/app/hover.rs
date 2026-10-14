@@ -18,6 +18,7 @@ use crate::hover::trigger::{PointerSample, Trigger, TriggerKey, TriggerMode};
 use crate::hover::{lookup_in, HoverMemory, LookupOutcome};
 use crate::media::crop_to_region;
 use crate::ocr::{MeikiEngine, OcrEngine};
+use crate::pointer::WindowIdentity;
 use crate::pointer::{PointerTracker, X11Pointer};
 use crate::sources::now_millis;
 use crate::tokenizer::Tokenizer;
@@ -254,7 +255,15 @@ fn watch(
             thread::sleep(HIDE_SETTLE);
         }
         let window = pointer.window_under_pointer().ok().flatten();
-        shown = look_up(app, tokenizer, &mut capture, &mut engine, cursor, window);
+        let identity = pointer.identify_window_under_pointer().unwrap_or_default();
+        shown = look_up(
+            app,
+            tokenizer,
+            &mut capture,
+            &mut engine,
+            cursor,
+            (window, identity),
+        );
     }
 }
 
@@ -264,7 +273,7 @@ fn look_up(
     capture: &mut X11Capture,
     engine: &mut MeikiEngine,
     cursor: (i32, i32),
-    window: Option<Region>,
+    (window, identity): (Option<Region>, WindowIdentity),
 ) -> Option<Shown> {
     let scan = |sentence: &str, start: usize| {
         app.state::<AppState>()
@@ -334,7 +343,7 @@ fn look_up(
                 width: right - left,
                 height: bottom - top,
             };
-            show_popup(app, popup, &result, screenshot);
+            show_popup(app, popup, &result, screenshot, identity);
             Some(Shown {
                 keep: [popup.grow(KEEP_MARGIN), line.grow(KEEP_MARGIN)],
                 popup,
@@ -377,6 +386,7 @@ fn show_popup(
     popup: Rect,
     result: &crate::hover::HoverResult,
     screenshot: Option<RgbImage>,
+    identity: WindowIdentity,
 ) {
     let Some(window) = app.get_webview_window(POPUP_LABEL) else {
         return;
@@ -385,7 +395,7 @@ fn show_popup(
     let _ = window.set_position(PhysicalPosition::new(popup.x, popup.y));
     let _ = app.emit_to(POPUP_LABEL, RESULT_EVENT, result);
     if let Some(memory) = app.try_state::<HoverMemory>() {
-        memory.set_with_screenshot(result.clone(), screenshot);
+        memory.set_with_origin(result.clone(), screenshot, identity);
     }
     let _ = window.show();
 }

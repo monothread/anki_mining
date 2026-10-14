@@ -11,10 +11,11 @@ use crate::anki::{default_mining_model, AnkiClient, AnkiError};
 use crate::audio::{audio_file, SharedAudio};
 use crate::capture::Region;
 use crate::cards::{build_note, CardInput, MediaFile};
-use crate::config::{Config, DEFAULT_MODEL_NAME};
+use crate::config::{Config, DuplicatePolicy, DEFAULT_MODEL_NAME};
 use crate::dictionary::{Dictionary, DictionaryError, ImportStats, ScanResult};
 use crate::hover::{card_input, HoverMemory};
 use crate::media::screenshot_file;
+use crate::profiles::{resolve, Origin};
 use crate::sources::now_millis;
 use crate::sources::ocr::RegionHandle;
 use crate::text_offsets::utf16_offset_to_byte;
@@ -175,7 +176,10 @@ impl AppState {
             self.anki.ensure_model(&default_mining_model())?;
             self.model_ready.store(true, Ordering::SeqCst);
         }
-        Ok(self.anki.add_note(&build_note(profile, input))?)
+        let allow_duplicate = self.config.duplicate_policy == DuplicatePolicy::Allow;
+        Ok(self
+            .anki
+            .add_note_with(&build_note(profile, input), allow_duplicate)?)
     }
 
     /// Adds the chosen entry of the word that is shown in the popup (see [`HoverMemory`]) and
@@ -196,7 +200,19 @@ impl AppState {
                 .and_then(|image| screenshot_file(&image, now_millis()).ok());
         }
         input.audio = self.sentence_audio();
-        self.mine(&input, None)
+        let identity = memory.identity();
+        let origin = Origin {
+            source_id: Some(input.source.clone()),
+            app_name: identity.app_name,
+            window_title: identity.title,
+        };
+        let profile_id = resolve(
+            &self.config.profiles,
+            &self.config.default_profile_id,
+            &origin,
+        )
+        .map(|profile| profile.id.clone());
+        self.mine(&input, profile_id.as_deref())
     }
 
     /// Replaces the dictionary with the contents of a `jmdict-simplified` JSON file.
@@ -225,7 +241,7 @@ mod tests {
     use crate::anki::test_support::{failure, ok, MockAnki, Reply};
     use crate::config::{default_profile, Config};
     use crate::types::entry::Entry;
-    use crate::types::profile::Profile;
+    use crate::types::profile::{Profile, ProfileMatch};
 
     const JMDICT_FIXTURE: &str = r#"{
         "tags": {},
@@ -940,5 +956,86 @@ mod tests {
         .expect("base64");
         // Exactly 1 s: the padding never reaches past the limit or the end of the sound.
         assert_eq!(bytes.len(), 44 + 16_000 * 2);
+    }
+
+    fn profile_for(id: &str, deck: &str, app: Option<&str>, title: Option<&str>) -> Profile {
+        Profile {
+            id: id.to_string(),
+            name: id.to_string(),
+            deck_name: deck.to_string(),
+            r#match: ProfileMatch {
+                source_id: None,
+                app_name: app.map(str::to_string),
+                window_title: title.map(str::to_string),
+            },
+            ..crate::config::default_profile()
+        }
+    }
+
+    fn deck_used_for(identity: crate::pointer::WindowIdentity) -> String {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+        let state = state_with(Config {
+            anki_connect_url: mock.url.clone(),
+            profiles: vec![
+                crate::config::default_profile(),
+                profile_for("player", "Anime", Some("mpv"), None),
+                profile_for("youtube", "Youtube", Some("Navigator"), Some("YouTube")),
+            ],
+            ..Config::default()
+        });
+        let memory = HoverMemory::default();
+        remembered(&memory);
+        memory.set_with_origin(memory.get().expect("remembered"), None, identity);
+
+        state.mine_from_hover(&memory, 0, 0).expect("note");
+
+        mock.requests()[1]["params"]["note"]["deckName"]
+            .as_str()
+            .expect("deck")
+            .to_string()
+    }
+
+    #[test]
+    fn the_card_goes_to_the_deck_of_the_application_the_word_was_found_in() {
+        let identity = |app: &str, title: &str| crate::pointer::WindowIdentity {
+            app_name: Some(app.to_string()),
+            title: Some(title.to_string()),
+        };
+
+        assert_eq!(deck_used_for(identity("mpv", "episode 1")), "Anime");
+        assert_eq!(
+            deck_used_for(identity("Navigator", "猫 - YouTube")),
+            "Youtube"
+        );
+        assert_eq!(deck_used_for(identity("Navigator", "Wikipedia")), "Mining");
+        assert_eq!(
+            deck_used_for(crate::pointer::WindowIdentity::default()),
+            "Mining"
+        );
+    }
+
+    #[test]
+    fn duplicates_are_refused_by_default_and_allowed_by_the_policy() {
+        let note_options = |policy: DuplicatePolicy| {
+            let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+            let state = state_with(Config {
+                anki_connect_url: mock.url.clone(),
+                duplicate_policy: policy,
+                ..Config::default()
+            });
+            let memory = HoverMemory::default();
+            remembered(&memory);
+            state.mine_from_hover(&memory, 0, 0).expect("note");
+            mock.requests()[1]["params"]["note"]["options"].clone()
+        };
+
+        assert_eq!(
+            note_options(DuplicatePolicy::Skip),
+            json!({ "allowDuplicate": false, "duplicateScope": "deck" })
+        );
+        assert_eq!(
+            note_options(DuplicatePolicy::Allow),
+            json!({ "allowDuplicate": true, "duplicateScope": "deck" })
+        );
     }
 }

@@ -7,6 +7,8 @@ pub mod trigger;
 use std::sync::Mutex;
 
 use image::RgbImage;
+
+use crate::pointer::WindowIdentity;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -39,6 +41,8 @@ struct Remembered {
     result: HoverResult,
     /// The window the word was found in, as it looked at that moment.
     screenshot: Option<RgbImage>,
+    /// The application the word was found in.
+    identity: WindowIdentity,
 }
 
 /// The word of the last lookup that was shown, kept so that it can be added to Anki.
@@ -51,9 +55,34 @@ impl HoverMemory {
     }
 
     pub fn set_with_screenshot(&self, result: HoverResult, screenshot: Option<RgbImage>) {
+        self.set_with_origin(result, screenshot, WindowIdentity::default());
+    }
+
+    pub fn set_with_origin(
+        &self,
+        result: HoverResult,
+        screenshot: Option<RgbImage>,
+        identity: WindowIdentity,
+    ) {
         if let Ok(mut current) = self.0.lock() {
-            *current = Some(Remembered { result, screenshot });
+            *current = Some(Remembered {
+                result,
+                screenshot,
+                identity,
+            });
         }
+    }
+
+    pub fn identity(&self) -> WindowIdentity {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|current| {
+                current
+                    .as_ref()
+                    .map(|remembered| remembered.identity.clone())
+            })
+            .unwrap_or_default()
     }
 
     pub fn clear(&self) {
@@ -879,5 +908,25 @@ mod tests {
 
         assert_eq!(direct, through_capture);
         assert_eq!(found(direct).results[0].source, "友達");
+    }
+
+    #[test]
+    fn the_memory_keeps_the_application_the_word_was_found_in() {
+        let memory = HoverMemory::default();
+        assert_eq!(memory.identity(), WindowIdentity::default());
+
+        let identity = WindowIdentity {
+            app_name: Some("mpv".to_string()),
+            title: Some("episode 1".to_string()),
+        };
+        memory.set_with_origin(two_entry_result(), None, identity.clone());
+        assert_eq!(memory.identity(), identity);
+
+        memory.set(two_entry_result());
+        assert_eq!(memory.identity(), WindowIdentity::default());
+
+        memory.set_with_origin(two_entry_result(), None, identity);
+        memory.clear();
+        assert_eq!(memory.identity(), WindowIdentity::default());
     }
 }

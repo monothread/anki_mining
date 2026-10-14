@@ -19,6 +19,8 @@ export interface Config {
     audioOnCards: boolean;
     /** The longest audio clip put on a card, in seconds. */
     audioSeconds: number;
+    /** What to do when the card already exists in the deck. */
+    duplicatePolicy: 'skip' | 'allow';
     defaultProfileId: string;
     profiles: Profile[];
 }

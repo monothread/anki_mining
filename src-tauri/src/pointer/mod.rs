@@ -38,6 +38,14 @@ impl PointerReading {
     }
 }
 
+/// Which application a window belongs to.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WindowIdentity {
+    /// The window class (`WM_CLASS`), e.g. `mpv` or `Navigator`.
+    pub app_name: Option<String>,
+    pub title: Option<String>,
+}
+
 pub trait PointerTracker {
     fn read(&mut self) -> Result<PointerReading, PointerError>;
 
@@ -45,6 +53,11 @@ pub trait PointerTracker {
     /// the bare desktop or when the backend cannot tell.
     fn window_under_pointer(&mut self) -> Result<Option<Region>, PointerError> {
         Ok(None)
+    }
+
+    /// The application and title of the window under the pointer; empty when unknown.
+    fn identify_window_under_pointer(&mut self) -> Result<WindowIdentity, PointerError> {
+        Ok(WindowIdentity::default())
     }
 }
 

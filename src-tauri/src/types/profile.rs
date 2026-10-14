@@ -60,6 +60,9 @@ pub fn default_field_mapping() -> FieldMapping {
 pub struct ProfileMatch {
     pub source_id: Option<String>,
     pub app_name: Option<String>,
+    /// Part of the window title (any case), e.g. `YouTube` to tell sites apart in a browser.
+    #[serde(default)]
+    pub window_title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +106,7 @@ mod tests {
             r#match: ProfileMatch {
                 source_id: Some("browser-extension".to_string()),
                 app_name: None,
+                window_title: None,
             },
         }
     }
@@ -157,7 +161,7 @@ mod tests {
                 "deckName": "Youtube",
                 "modelName": "AnkiMining",
                 "fieldMapping": default_mapping_json(),
-                "match": { "sourceId": "browser-extension", "appName": null }
+                "match": { "sourceId": "browser-extension", "appName": null, "windowTitle": null }
             })
         );
     }

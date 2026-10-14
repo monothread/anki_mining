@@ -109,8 +109,14 @@ impl AnkiClient {
 
     /// Adds a note and returns its id. Duplicates are rejected with [`AnkiError::Duplicate`].
     pub fn add_note(&self, note: &AnkiNote) -> Result<u64, AnkiError> {
+        self.add_note_with(note, false)
+    }
+
+    /// Adds a note and returns its id; with `allow_duplicate` a note that already exists in the
+    /// deck is added again.
+    pub fn add_note_with(&self, note: &AnkiNote, allow_duplicate: bool) -> Result<u64, AnkiError> {
         let mut params = note_params(note)?;
-        params["options"] = json!({ "allowDuplicate": false, "duplicateScope": "deck" });
+        params["options"] = json!({ "allowDuplicate": allow_duplicate, "duplicateScope": "deck" });
 
         let id: Option<u64> = self.call("addNote", json!({ "note": params }))?;
         id.ok_or_else(|| AnkiError::InvalidResponse("addNote returned no note id".to_string()))
@@ -314,6 +320,21 @@ mod tests {
         assert_eq!(
             sent["picture"],
             json!([{ "filename": "shot.jpg", "data": "AwQF", "fields": ["Picture"] }])
+        );
+    }
+
+    #[test]
+    fn add_note_can_allow_duplicates() {
+        let mock = MockAnki::start(vec![ok(json!(9))]);
+
+        let id = client(&mock)
+            .add_note_with(&sample_note(), true)
+            .expect("add");
+
+        assert_eq!(id, 9);
+        assert_eq!(
+            mock.requests()[0]["params"]["note"]["options"],
+            json!({ "allowDuplicate": true, "duplicateScope": "deck" })
         );
     }
 

@@ -1,9 +1,9 @@
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{ConnectionExt, KeyButMask};
+use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, KeyButMask, Window};
 use x11rb::rust_connection::RustConnection;
 use x11rb::NONE;
 
-use super::{PointerError, PointerReading, PointerTracker};
+use super::{PointerError, PointerReading, PointerTracker, WindowIdentity};
 use crate::capture::Region;
 
 /// Reads the pointer of an X11 display (works without any special permission).
@@ -72,6 +72,104 @@ impl PointerTracker for X11Pointer {
             geometry.border_width,
         )))
     }
+
+    fn identify_window_under_pointer(&mut self) -> Result<WindowIdentity, PointerError> {
+        let pointer = self
+            .connection
+            .query_pointer(self.root)
+            .map_err(|error| PointerError::Failed(error.to_string()))?
+            .reply()
+            .map_err(|error| PointerError::Failed(error.to_string()))?;
+        if pointer.child == NONE {
+            return Ok(WindowIdentity::default());
+        }
+        let Some((client, class)) = self.client_window(pointer.child) else {
+            return Ok(WindowIdentity::default());
+        };
+        Ok(WindowIdentity {
+            app_name: class_from_wm_class(&class),
+            title: self.window_title(client),
+        })
+    }
+}
+
+impl X11Pointer {
+    fn text_property(&self, window: Window, property: AtomEnum) -> Option<Vec<u8>> {
+        let reply = self
+            .connection
+            .get_property(false, window, property, AtomEnum::STRING, 0, 1024)
+            .ok()?
+            .reply()
+            .ok()?;
+        if reply.value.is_empty() {
+            return None;
+        }
+        Some(reply.value)
+    }
+
+    /// The `_NET_WM_NAME` (UTF-8) of the window, or its old-style `WM_NAME`.
+    fn window_title(&self, window: Window) -> Option<String> {
+        let atom = self
+            .connection
+            .intern_atom(false, b"_NET_WM_NAME")
+            .ok()?
+            .reply()
+            .ok()?
+            .atom;
+        let utf8 = self
+            .connection
+            .intern_atom(false, b"UTF8_STRING")
+            .ok()?
+            .reply()
+            .ok()?
+            .atom;
+        let modern = self
+            .connection
+            .get_property(false, window, atom, utf8, 0, 1024)
+            .ok()?
+            .reply()
+            .ok()?;
+        if !modern.value.is_empty() {
+            return Some(String::from_utf8_lossy(&modern.value).into_owned());
+        }
+        let old = self.text_property(window, AtomEnum::WM_NAME)?;
+        Some(String::from_utf8_lossy(&old).into_owned())
+    }
+
+    /// The application's window (the one with a `WM_CLASS`) inside a top-level frame: the frame
+    /// itself or the first window below it that has one.
+    fn client_window(&self, frame: Window) -> Option<(Window, Vec<u8>)> {
+        let mut pending = vec![frame];
+        let mut visited = 0;
+        while let Some(window) = pending.pop() {
+            visited += 1;
+            if visited > 64 {
+                return None;
+            }
+            if let Some(class) = self.text_property(window, AtomEnum::WM_CLASS) {
+                return Some((window, class));
+            }
+            if let Some(tree) = self
+                .connection
+                .query_tree(window)
+                .ok()
+                .and_then(|cookie| cookie.reply().ok())
+            {
+                pending.extend(tree.children.iter().rev());
+            }
+        }
+        None
+    }
+}
+
+/// The class part of a `WM_CLASS` value (`instance\0class\0`).
+fn class_from_wm_class(value: &[u8]) -> Option<String> {
+    let mut names = value
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty());
+    let instance = names.next()?;
+    let class = names.next().unwrap_or(instance);
+    Some(String::from_utf8_lossy(class).into_owned())
 }
 
 /// The screen rectangle of a window including its border.
@@ -234,6 +332,93 @@ mod tests {
             })
         );
         assert_eq!(outside, None);
+    }
+
+    #[test]
+    fn the_class_is_the_second_name_of_wm_class() {
+        assert_eq!(
+            class_from_wm_class(b"navigator\0Firefox\0"),
+            Some("Firefox".to_string())
+        );
+        assert_eq!(class_from_wm_class(b"mpv\0mpv\0"), Some("mpv".to_string()));
+        assert_eq!(class_from_wm_class(b"solo\0"), Some("solo".to_string()));
+        assert_eq!(class_from_wm_class(b"\0\0"), None);
+        assert_eq!(class_from_wm_class(b""), None);
+    }
+
+    #[test]
+    #[ignore = "needs an X11 display; run through `scripts/dev.sh test`"]
+    fn identifies_the_application_and_title_of_the_window_under_the_pointer() {
+        use x11rb::protocol::xproto::{CreateWindowAux, PropMode, WindowClass};
+        use x11rb::wrapper::ConnectionExt as _;
+        use x11rb::COPY_DEPTH_FROM_PARENT;
+
+        let _display = crate::x11_test_lock();
+        let (connection, screen_number) = x11rb::connect(None).expect("display");
+        let root = connection.setup().roots[screen_number].root;
+        let window = connection.generate_id().expect("id");
+        connection
+            .create_window(
+                COPY_DEPTH_FROM_PARENT,
+                window,
+                root,
+                300,
+                300,
+                200,
+                100,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                0,
+                &CreateWindowAux::new().override_redirect(1),
+            )
+            .expect("create");
+        connection
+            .change_property8(
+                PropMode::REPLACE,
+                window,
+                AtomEnum::WM_CLASS,
+                AtomEnum::STRING,
+                b"mpv\0mpv\0",
+            )
+            .expect("class");
+        connection
+            .change_property8(
+                PropMode::REPLACE,
+                window,
+                AtomEnum::WM_NAME,
+                AtomEnum::STRING,
+                b"episode 1",
+            )
+            .expect("title");
+        connection.map_window(window).expect("map");
+        connection
+            .get_input_focus()
+            .expect("sync")
+            .reply()
+            .expect("sync reply");
+        let mut pointer = X11Pointer::connect().expect("connect");
+
+        connection
+            .warp_pointer(x11rb::NONE, root, 0, 0, 0, 0, 350, 340)
+            .expect("warp")
+            .check()
+            .expect("warp reply");
+        let inside = pointer.identify_window_under_pointer().expect("inside");
+        connection
+            .warp_pointer(x11rb::NONE, root, 0, 0, 0, 0, 1200, 900)
+            .expect("warp")
+            .check()
+            .expect("warp reply");
+        let outside = pointer.identify_window_under_pointer().expect("outside");
+
+        assert_eq!(
+            inside,
+            WindowIdentity {
+                app_name: Some("mpv".to_string()),
+                title: Some("episode 1".to_string())
+            }
+        );
+        assert_eq!(outside, WindowIdentity::default());
     }
 
     #[test]
