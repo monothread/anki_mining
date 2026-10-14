@@ -266,6 +266,9 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
         backend.onAppError((message) => {
             showMessage(message, 'error');
         }),
+        backend.onMineResult((result) => {
+            showMessage(result.message, result.success ? 'success' : 'error');
+        }),
         backend.onHoverInfo((message) => {
             showMessage(message, 'info');
         }),

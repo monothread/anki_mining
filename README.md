@@ -2,13 +2,19 @@
 
 Look up Japanese words anywhere on your screen, with no browser extension: pause a video, move the
 mouse over a subtitle and a popup shows the word under the cursor with its reading, dictionary form and
-meaning. The goal is to turn those words into Anki cards, which is the last part of the plan.
+meaning, and one click (or Alt+M) adds it to Anki with its sentence.
 
 <p align="center"><img src="src-tauri/app-icon.png" alt="App icon: a star being mined with a pickaxe" width="128"></p>
 
 **Status: first version (0.1.0).** Hover lookup works on X11 (YouTube subtitles, TV banners, web pages,
-any text on screen). Creating Anki cards is implemented and unit-tested but deliberately not finished or
-tried against a real Anki yet. See [docs/PROGRESS.md](docs/PROGRESS.md).
+any text on screen). Adding a word to Anki works against a mock AnkiConnect and has not been tried against
+a real Anki yet; cards have no picture or audio yet. See [docs/PROGRESS.md](docs/PROGRESS.md).
+
+## Adding words to Anki
+
+With the popup open, click **Add to Anki** on the entry you want, or press **Alt+M** to add the first one.
+The card gets the word, its reading and meanings and the sentence with the word highlighted. Duplicates are
+refused. The popup tells you what happened.
 
 ## How it works
 
@@ -31,7 +37,7 @@ tried against a real Anki yet. See [docs/PROGRESS.md](docs/PROGRESS.md).
 
 - Linux with **X11** (tested on Linux Mint / Cinnamon). Wayland is planned (see the roadmap).
 - A Japanese-capable font for the popup (for example `fonts-noto-cjk`).
-- Anki with the AnkiConnect add-on, only once card creation is finished.
+- Anki with the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on (open while mining). The first card creates the note type `AnkiMining` and uses the deck `Mining` (configurable in `config.json`).
 
 ## Run
 
@@ -80,7 +86,7 @@ screenshot, mouse move). More in [docs/PROGRESS.md](docs/PROGRESS.md).
   word under the cursor is usually right; the sentence shown may be noisy.
 - Vertical text is supported but less accurate than horizontal text (beta model). Multi-line subtitles and neighbouring columns are joined (up to 3 lines around the hovered one).
 - X11 only for now (the global pointer position is not available to apps on Wayland).
-- The popup does not create Anki cards yet.
+- Cards have no picture or audio yet.
 
 ## Third-party components and licenses
 

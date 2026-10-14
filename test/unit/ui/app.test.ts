@@ -539,6 +539,34 @@ describe('createApp hover controls', () => {
     });
 });
 
+describe('createApp mining shortcut result', () => {
+    it('shows a card that was added with the shortcut', async () => {
+        const { root, fake } = await mount();
+
+        fake.emitMineResult({ success: true, message: 'Added 猫 (note 7)' });
+
+        expect(text(root, '#message')).toBe('Added 猫 (note 7)');
+        expect(root.querySelector<HTMLElement>('#message')?.dataset['kind']).toBe('success');
+    });
+
+    it('shows why a card could not be added', async () => {
+        const { root, fake } = await mount();
+
+        fake.emitMineResult({ success: false, message: 'the note is a duplicate' });
+
+        expect(text(root, '#message')).toBe('the note is a duplicate');
+        expect(root.querySelector<HTMLElement>('#message')?.dataset['kind']).toBe('error');
+    });
+
+    it('unsubscribes from mining results on dispose', async () => {
+        const { fake, view } = await mount();
+
+        view.dispose();
+
+        expect(fake.unsubscribes.mine).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('createApp hover explanations', () => {
     it('tells the user why a hover lookup showed nothing', async () => {
         const { root, fake } = await mount();

@@ -12,6 +12,7 @@ use crate::capture::Region;
 use crate::cards::{build_note, CardInput};
 use crate::config::{Config, DEFAULT_MODEL_NAME};
 use crate::dictionary::{Dictionary, DictionaryError, ImportStats, ScanResult};
+use crate::hover::{card_input, HoverMemory};
 use crate::sources::ocr::RegionHandle;
 use crate::text_offsets::utf16_offset_to_byte;
 
@@ -29,6 +30,8 @@ pub enum AppError {
     InvalidPosition(usize),
     #[error("profile `{0}` does not exist")]
     UnknownProfile(String),
+    #[error("there is no word to add: look a word up first")]
+    NothingToMine,
     #[error("text recognition is not available: {0}")]
     OcrUnavailable(String),
     #[error("the selected area is too small ({width}x{height}); it must be at least {MIN_REGION_WIDTH}x{MIN_REGION_HEIGHT} pixels")]
@@ -149,6 +152,21 @@ impl AppState {
             self.model_ready.store(true, Ordering::SeqCst);
         }
         Ok(self.anki.add_note(&build_note(profile, input))?)
+    }
+
+    /// Adds the chosen entry of the word that is shown in the popup (see [`HoverMemory`]) and
+    /// returns the Anki note id.
+    pub fn mine_from_hover(
+        &self,
+        memory: &HoverMemory,
+        result_index: usize,
+        entry_index: usize,
+    ) -> Result<u64, AppError> {
+        let input = memory
+            .get()
+            .and_then(|result| card_input(&result, result_index, entry_index))
+            .ok_or(AppError::NothingToMine)?;
+        self.mine(&input, None)
     }
 
     /// Replaces the dictionary with the contents of a `jmdict-simplified` JSON file.
@@ -637,5 +655,98 @@ mod tests {
         );
         assert_eq!(handle.get(), None);
         assert!(!state.status().expect("status").ocr_available);
+    }
+
+    fn remembered(memory: &HoverMemory) {
+        memory.set(crate::hover::HoverResult {
+            sentence: "私は猫が好き".to_string(),
+            word_start: 2,
+            results: vec![ScanResult {
+                source: "猫".to_string(),
+                length: 1,
+                entries: vec![crate::dictionary::DeinflectedEntry {
+                    entry: Entry {
+                        expression: "猫".to_string(),
+                        reading: "ねこ".to_string(),
+                        meanings: vec!["cat".to_string()],
+                        parts_of_speech: vec!["n".to_string()],
+                        frequency: None,
+                    },
+                    source: "猫".to_string(),
+                    reasons: vec![],
+                }],
+            }],
+            char_bbox: [0, 0, 1, 1],
+            line_bbox: [0, 0, 10, 2],
+            vertical: false,
+        });
+    }
+
+    #[test]
+    fn mining_from_the_popup_adds_the_remembered_word_with_its_sentence() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(77))]);
+        let state = state_for(&mock);
+        let memory = HoverMemory::default();
+        remembered(&memory);
+
+        let id = state.mine_from_hover(&memory, 0, 0).expect("note");
+
+        assert_eq!(id, 77);
+        let note = &mock.requests()[1]["params"]["note"];
+        assert_eq!(note["deckName"], json!("Mining"));
+        assert_eq!(note["fields"]["Expression"], json!("猫"));
+        assert_eq!(note["fields"]["Reading"], json!("ねこ"));
+        assert_eq!(note["fields"]["Meaning"], json!("cat"));
+        assert_eq!(note["fields"]["Sentence"], json!("私は<b>猫</b>が好き"));
+        assert_eq!(note["fields"]["Source"], json!("screen"));
+    }
+
+    #[test]
+    fn mining_without_a_remembered_word_does_not_call_anki() {
+        let mock = MockAnki::start(vec![]);
+        let state = state_for(&mock);
+
+        let error = state
+            .mine_from_hover(&HoverMemory::default(), 0, 0)
+            .expect_err("must fail");
+
+        assert!(matches!(error, AppError::NothingToMine));
+        assert_eq!(
+            error.to_string(),
+            "there is no word to add: look a word up first"
+        );
+        assert_eq!(mock.requests(), Vec::<serde_json::Value>::new());
+    }
+
+    #[test]
+    fn mining_an_entry_that_does_not_exist_is_nothing_to_mine() {
+        let mock = MockAnki::start(vec![]);
+        let state = state_for(&mock);
+        let memory = HoverMemory::default();
+        remembered(&memory);
+
+        assert!(matches!(
+            state.mine_from_hover(&memory, 0, 3),
+            Err(AppError::NothingToMine)
+        ));
+        assert!(matches!(
+            state.mine_from_hover(&memory, 4, 0),
+            Err(AppError::NothingToMine)
+        ));
+    }
+
+    #[test]
+    fn mining_the_same_word_twice_reports_the_duplicate() {
+        let mock = MockAnki::start(vec![
+            ok(json!(["AnkiMining"])),
+            failure("cannot create note because it is a duplicate"),
+        ]);
+        let state = state_for(&mock);
+        let memory = HoverMemory::default();
+        remembered(&memory);
+
+        let error = state.mine_from_hover(&memory, 0, 0).expect_err("must fail");
+
+        assert!(matches!(error, AppError::Anki(AnkiError::Duplicate)));
     }
 }

@@ -4,10 +4,13 @@ pub mod locate;
 pub mod placement;
 pub mod trigger;
 
+use std::sync::Mutex;
+
 use serde::Serialize;
 use thiserror::Error;
 
 use crate::capture::{CaptureError, Region, ScreenCapture};
+use crate::cards::CardInput;
 use crate::dictionary::ScanResult;
 use crate::ocr::{OcrEngine, OcrError};
 use crate::tokenizer::{Tokenizer, TokenizerError};
@@ -24,6 +27,50 @@ pub enum HoverError {
     Tokenizer(#[from] TokenizerError),
     #[error("dictionary lookup failed: {0}")]
     Dictionary(String),
+}
+
+/// Source recorded on the cards made from a hover lookup.
+pub const CARD_SOURCE: &str = "screen";
+
+/// The word of the last lookup that was shown, kept so that it can be added to Anki.
+#[derive(Debug, Default)]
+pub struct HoverMemory(Mutex<Option<HoverResult>>);
+
+impl HoverMemory {
+    pub fn set(&self, result: HoverResult) {
+        if let Ok(mut current) = self.0.lock() {
+            *current = Some(result);
+        }
+    }
+
+    pub fn clear(&self) {
+        if let Ok(mut current) = self.0.lock() {
+            *current = None;
+        }
+    }
+
+    pub fn get(&self) -> Option<HoverResult> {
+        self.0.lock().ok().and_then(|current| current.clone())
+    }
+}
+
+/// The card for `result.results[result_index].entries[entry_index]`: the sentence of the lookup
+/// with the matched text highlighted. `None` if there is no such entry.
+pub fn card_input(
+    result: &HoverResult,
+    result_index: usize,
+    entry_index: usize,
+) -> Option<CardInput> {
+    let matched = result.results.get(result_index)?;
+    let found = matched.entries.get(entry_index)?;
+    Some(CardInput {
+        entry: found.entry.clone(),
+        sentence: result.sentence.clone(),
+        highlight: Some((result.word_start, result.word_start + matched.length)),
+        source: CARD_SOURCE.to_string(),
+        audio: None,
+        picture: None,
+    })
 }
 
 /// Looks a sentence up from a UTF-16 offset (see `AppState::scan_at`).
@@ -674,5 +721,88 @@ mod tests {
 
         assert_eq!(result.word_start, 11);
         assert_eq!(result.results[0].source, "世界");
+    }
+
+    // --- memory and cards ---
+
+    fn two_entry_result() -> HoverResult {
+        let entry = |expression: &str, reading: &str| crate::dictionary::DeinflectedEntry {
+            entry: crate::types::entry::Entry {
+                expression: expression.to_string(),
+                reading: reading.to_string(),
+                meanings: vec!["meaning".to_string()],
+                parts_of_speech: vec!["n".to_string()],
+                frequency: None,
+            },
+            source: expression.to_string(),
+            reasons: vec![],
+        };
+        HoverResult {
+            sentence: "昨日、友達と映画".to_string(),
+            word_start: 3,
+            results: vec![
+                crate::dictionary::ScanResult {
+                    source: "友達".to_string(),
+                    length: 2,
+                    entries: vec![entry("友達", "ともだち"), entry("友だち", "ともだち")],
+                },
+                crate::dictionary::ScanResult {
+                    source: "友".to_string(),
+                    length: 1,
+                    entries: vec![entry("友", "とも")],
+                },
+            ],
+            char_bbox: [0, 0, 1, 1],
+            line_bbox: [0, 0, 10, 2],
+            vertical: false,
+        }
+    }
+
+    #[test]
+    fn the_card_highlights_the_matched_text_of_the_chosen_result() {
+        let result = two_entry_result();
+
+        let longest = card_input(&result, 0, 1).expect("card");
+        let shortest = card_input(&result, 1, 0).expect("card");
+
+        assert_eq!(longest.entry.expression, "友だち");
+        assert_eq!(longest.sentence, "昨日、友達と映画");
+        assert_eq!(longest.highlight, Some((3, 5)));
+        assert_eq!(longest.source, "screen");
+        assert_eq!((longest.audio, longest.picture), (None, None));
+        assert_eq!(shortest.entry.expression, "友");
+        assert_eq!(shortest.highlight, Some((3, 4)));
+    }
+
+    #[test]
+    fn there_is_no_card_for_an_entry_that_does_not_exist() {
+        let result = two_entry_result();
+
+        assert_eq!(card_input(&result, 2, 0), None);
+        assert_eq!(card_input(&result, 0, 2), None);
+        let empty = HoverResult {
+            results: vec![],
+            ..result
+        };
+        assert_eq!(card_input(&empty, 0, 0), None);
+    }
+
+    #[test]
+    fn the_memory_keeps_the_last_word_until_it_is_cleared() {
+        let memory = HoverMemory::default();
+        assert_eq!(memory.get(), None);
+
+        memory.set(two_entry_result());
+        assert_eq!(memory.get(), Some(two_entry_result()));
+
+        let other = HoverResult {
+            sentence: "別".to_string(),
+            ..two_entry_result()
+        };
+        memory.set(other.clone());
+        assert_eq!(memory.get(), Some(other));
+
+        memory.clear();
+        assert_eq!(memory.get(), None);
     }
 }

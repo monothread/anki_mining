@@ -15,7 +15,7 @@ use crate::capture::{ScreenCapture, X11Capture};
 use crate::config::Config;
 use crate::hover::placement::{popup_position, popup_position_beside, Rect};
 use crate::hover::trigger::{PointerSample, Trigger, TriggerKey, TriggerMode};
-use crate::hover::{lookup_at, LookupOutcome};
+use crate::hover::{lookup_at, HoverMemory, LookupOutcome};
 use crate::ocr::{MeikiEngine, OcrEngine};
 use crate::pointer::{PointerTracker, X11Pointer};
 use crate::sources::now_millis;
@@ -355,10 +355,16 @@ fn show_popup(app: &AppHandle, popup: Rect, result: &crate::hover::HoverResult) 
     let _ = window.set_size(PhysicalSize::new(popup.width as u32, popup.height as u32));
     let _ = window.set_position(PhysicalPosition::new(popup.x, popup.y));
     let _ = app.emit_to(POPUP_LABEL, RESULT_EVENT, result);
+    if let Some(memory) = app.try_state::<HoverMemory>() {
+        memory.set(result.clone());
+    }
     let _ = window.show();
 }
 
 fn hide_popup(app: &AppHandle) {
+    if let Some(memory) = app.try_state::<HoverMemory>() {
+        memory.clear();
+    }
     if let Some(window) = app.get_webview_window(POPUP_LABEL) {
         let _ = window.hide();
     }

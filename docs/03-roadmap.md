@@ -22,8 +22,8 @@ The product must work after installing a single app, with no browser extension o
 - [x] P1-10 — X11 `OverlayWindow`: transparent, always-on-top, word highlighting (dep: P1-05, P1-09)
 - [x] P1-11 — Dictionary popup (hover/click) (dep: P1-07, P1-10)
 - [x] P1-12 — Typed `AnkiClient` + creation of the "AnkiMining" note type (dep: P1-02)
-- [ ] P1-13 — (deferred, Anki last; code and unit tests exist, not tried against a real Anki) `CardBuilder` + global mining shortcut (dep: P1-11, P1-12)
-- [ ] P1-14 — (deferred, Anki last) End-to-end tests of the full flow with mocked AnkiConnect; document usage in the README; remove the `health` smoke-test module
+- [x] P1-13 — (checked against a mock AnkiConnect end to end; not yet against a real Anki) `CardBuilder` + global mining shortcut (dep: P1-11, P1-12)
+- [x] P1-14 — End-to-end tests of the full flow with mocked AnkiConnect; document usage in the README; remove the `health` smoke-test module
 
 ## Phase 2 — Media on cards
 **Acceptance criteria:** the card automatically includes a screenshot and the sentence audio (last N seconds). Starts after Phase 3.

@@ -14,7 +14,7 @@ Other text sources feed the same overlay window through a channel:
 ```
  TextSource (clipboard, websocket, OCR region, manual text) ──► Normalizer ──► Tokenizer ──► overlay "sentence" event
 ```
-Card creation (last part of the plan) is `CardBuilder` → `AnkiClient` → AnkiConnect.
+Card creation: the popup (button) or the Alt+M shortcut → `HoverMemory` (the word shown) → `card_input` → `CardBuilder` → `AnkiClient` → AnkiConnect (`mine_hover` command, `AppState::mine_from_hover`).
 
 ## Stack
 - **Shell/backend:** Tauri 2 (Rust). **Frontend:** vanilla TypeScript built with Vite, three pages: main overlay (`index.html`), popup (`popup.html`), region selector (`selector.html`).

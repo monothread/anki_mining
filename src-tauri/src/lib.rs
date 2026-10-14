@@ -4,7 +4,6 @@ pub mod capture;
 pub mod cards;
 pub mod config;
 pub mod dictionary;
-pub mod health;
 pub mod hover;
 pub mod normalizer;
 pub mod ocr;

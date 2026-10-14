@@ -4,14 +4,14 @@
 
 **Last updated:** 2026-10-14
 **Version:** 0.1.0, first version published (hover lookup works on X11; Anki card creation deferred)
-**Current phase:** 3 done as a first version (OCR + hover lookup); Phase 1 done except the Anki parts (P1-13, P1-14), which are deferred by decision
-**Next step:** media for the cards: the timing of the mpv subtitle (start/end, file path) for exact audio clips (P4-03), screenshot and audio capture (Phase 2), then OCR tuning on real frames (P3-05), AT-SPI evaluation (P4-05) and the deferred Anki work (P1-13 check, P1-14, Phase 5).
+**Current phase:** Phase 1 and Phase 3 done (hover lookup and a first Anki flow: add the word from the popup); Phase 2 (media) next
+**Next step:** media for the cards: screenshot of the window under the cursor (P2-01) and audio (P2-02..P2-04, with the exact subtitle timing from mpv in P4-03), then profiles, decks per source and duplicate handling (Phase 5). Also pending: try the Anki flow against a real Anki.
 
 ## Status per phase
 
 | Phase | Name | Status |
 |---|---|---|
-| 1 | MVP: clipboard/websocket → popup → Anki | Done except P1-13/P1-14 (Anki, deferred; code and unit tests exist, never tried against a real Anki) |
+| 1 | MVP: clipboard/websocket → popup → Anki | Done (the Anki flow is tested against a mock AnkiConnect, never tried against a real Anki) |
 | 2 | Media on cards (audio + screenshot) — after Phase 3 | Not started |
 | 3 | Screen OCR + hover lookup (core) | First version done and verified on the real desktop (YouTube, TV banner) and headless; P3-05 (preprocessing) open and optional |
 | 4 | mpv and optional browser extension | In progress (P4-02 done) |
@@ -49,6 +49,9 @@ Node 22, Rust 1.99, Tauri 2.12, Vite 8, Vitest 5, TypeScript 6, ESLint 10 with `
 ## OCR assets (not in git)
 Run `scripts/fetch-ocr-models.sh` once: it puts the two MeikiOCR models and `libonnxruntime.so` into `src-tauri/resources/ocr/` (needed by the OCR tests). `scripts/dev.sh image` builds the main image; the Python spike has its own throwaway image (`spikes/ocr/Dockerfile`).
 
+## Verifying the Anki flow headless
+`scripts/dev.sh exec scripts/e2e-mine.sh <frame.png> <jmdict.db> <x> <y> <hotkey|click:X,Y> [out dir]` runs the app on a virtual display with a mock AnkiConnect (`scripts/mock-ankiconnect.py`, which logs every request) and prints the requests it received. The default note type and deck are created/used through AnkiConnect; a real Anki needs the AnkiConnect add-on.
+
 ## Verifying the hover lookup headless
 Build the AppImage (`scripts/dev.sh appimage`), then `scripts/dev.sh exec scripts/e2e-hover.sh <1920x1080 frame.png> <jmdict.db> <x> <y> [hold|auto] [out dir]`. It shows the frame on a virtual display, starts the app, moves the mouse and saves `before/after/away.png`. `cargo run --release --example ocr_boxes -- src-tauri/resources/ocr <image.png>` prints where the OCR sees each character (to choose x, y).
 
@@ -58,7 +61,7 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 ## Known limitations
 - OCR can mix up text when subtitle layers overlap (e.g. the YouTube caption box drawn over another subtitle) and misread rare kanji in stylised broadcast fonts. The word under the cursor is usually still right; the sentence shown may be noisy.
 - Long lines get a stray `、` or `。` now and then at segment cuts and at the end of a line.
-- The popup is informational for now (no Anki button, by decision).
+- Cards have no picture or audio yet (Phase 2), and all go to the default profile's deck.
 - A text block is at most 3 lines (the hovered line plus one neighbour on each side), so a long paragraph gives a 3-line sentence.
 - Wayland: the global pointer position is not available to apps; solved in P6-03.
 - OCR accuracy was measured mostly on synthetic subtitles; real checks so far are three YouTube cases. Games and desktop players are still untested.
@@ -78,6 +81,7 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 ## Session log
 | Date | Summary | Tasks completed |
 |---|---|---|
+| 2026-10-14 | P1-13/P1-14: mining from the hover popup. `HoverMemory` keeps the word of the popup; `card_input` builds the card with the sentence and the matched text highlighted (`Source` = `screen`); `AppState::mine_from_hover`; command `mine_hover(resultIndex, entryIndex)`; the popup has an "Add to Anki" button per entry and shows the result ("Added 友達 (note N)" or the reason); the global shortcut (Alt+M) adds the first entry of the word shown in the popup, or, with no popup, still triggers the main window's own mining. Verified end to end in a virtual display with `scripts/e2e-mine.sh` and a mock AnkiConnect (`scripts/mock-ankiconnect.py`): Shift over 友, Alt+M and a click on the button both produced the right `addNote`. The old `health` smoke-test module was removed. 480 Rust + 121 Vitest tests | P1-13, P1-14 |
 | 2026-10-14 | P4-02 mpv source. `sources/mpv.rs`: connects to mpv's JSON IPC socket (default `/tmp/mpvsocket`, config `mpvSocket`, empty turns it off; mpv needs `input-ipc-server=/tmp/mpvsocket` in `mpv.conf`), observes `sub-text` and `media-title`, emits one event per subtitle (exact text, no OCR) with the media title, reconnects when mpv restarts, tolerates split messages and multi-byte characters. The header shows "mpv connected". Checked against a real mpv 0.34.1 (`examples/mpv_listen.rs`, generated video with Japanese subtitles in a throwaway root container): three subtitles received, multi-line kept, title right. The subtitle shows in the main overlay window (hover its words there). Timing for audio clips is not captured yet (P4-03). 471 Rust + 114 Vitest tests | P4-02 |
 | 2026-10-14 | P3-15 vertical text. The vertical recognition model (`meiki.text.rec.v0.vertical.32x480.onnx`, 12.9 MB, optional: without it columns are skipped) is ported: columns are scaled to 32 px wide and read in overlapping segments of 420 scaled px, characters are merged by suppression along y, text runs top to bottom. `OcrLine.vertical`, `lines_to_text` reads columns right to left, `ocr::layout` groups neighbouring columns (right to left), `character_at` and the popup placement (`popup_position_beside`) handle columns. Spike: `spikes/ocr/make_vertical*.py`, `run_vertical.py`; accuracy depends strongly on the rendering (clean regular weight 87-94%, bold with outline and noise 76%). 450 Rust + 112 Vitest tests | P3-15 |
 | 2026-10-14 | P3-13 and P3-14. Multi-line text: `ocr::layout` groups stacked lines of similar height and overlapping width into blocks (max 3 lines); `recognize_near` reads the whole block near the cursor and `character_at` joins its lines into one sentence with the right UTF-16 offset (a word may start on one line and end on the next). Real-OCR tests on a generated two-line subtitle (`twoline_1080p.png`). The trigger mode and the on/off switch changed from the header are saved to `config.json` (`hoverMode`, `hoverEnabled`); a file that could not be read is never overwritten and a failed save is reported while the change still applies. 426 Rust + 112 Vitest tests | P3-13, P3-14 |

@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { CardInput } from '../types/card';
 import type { HoverStatus, TriggerMode } from '../types/hover';
+import type { MineResult } from '../types/mine';
 import type { Region } from '../types/region';
 import type { ScanResult } from '../types/scan';
 import type { Sentence } from '../types/sentence';
@@ -30,6 +31,8 @@ export interface Backend {
     onOcrRegion: (handler: (region: Region | null) => void) => Promise<Unsubscribe>;
     /** Why a hover lookup showed nothing (no text, punctuation, no dictionary entry). */
     onHoverInfo: (handler: (message: string) => void) => Promise<Unsubscribe>;
+    /** A word was added (or could not be added) with the mining shortcut. */
+    onMineResult: (handler: (result: MineResult) => void) => Promise<Unsubscribe>;
 }
 
 export const tauriBackend: Backend = {
@@ -85,6 +88,11 @@ export const tauriBackend: Backend = {
     },
     onHoverInfo: async (handler) => {
         return listen<string>('hover-info', (message) => {
+            handler(message.payload);
+        });
+    },
+    onMineResult: async (handler) => {
+        return listen<MineResult>('mine-result', (message) => {
             handler(message.payload);
         });
     },

@@ -9,6 +9,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use serde::Serialize;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl,
     WebviewWindowBuilder,
@@ -20,6 +21,7 @@ use crate::cards::CardInput;
 use crate::config::Config;
 use crate::dictionary::{Dictionary, ImportStats, ScanResult};
 use crate::hover::trigger::TriggerMode;
+use crate::hover::{card_input, HoverMemory};
 use crate::normalizer::Normalizer;
 use crate::ocr::meiki::{DETECTION_MODEL, RECOGNITION_MODEL, RUNTIME_LIBRARY};
 use crate::ocr::MeikiEngine;
@@ -37,6 +39,7 @@ const CONFIG_FILE: &str = "config.json";
 const DICTIONARY_FILE: &str = "jmdict.db";
 const SENTENCE_EVENT: &str = "sentence";
 const MINE_EVENT: &str = "mine-hotkey";
+const MINE_RESULT_EVENT: &str = "mine-result";
 const ERROR_EVENT: &str = "app-error";
 const OCR_REGION_EVENT: &str = "ocr-region";
 const MANUAL_SOURCE_ID: &str = "manual";
@@ -94,6 +97,64 @@ fn report_save_error(app: &AppHandle, outcome: Result<(), String>) {
     if let Err(message) = outcome {
         let _ = app.emit(ERROR_EVENT, message);
     }
+}
+
+/// What happened when a word was added from the popup or with the shortcut.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MineResult {
+    success: bool,
+    message: String,
+}
+
+/// Adds the chosen entry of the word shown in the popup to Anki.
+fn mine_remembered(
+    state: &AppState,
+    memory: &HoverMemory,
+    result_index: usize,
+    entry_index: usize,
+) -> MineResult {
+    let word = memory
+        .get()
+        .and_then(|result| card_input(&result, result_index, entry_index))
+        .map(|input| input.entry.expression);
+    match state.mine_from_hover(memory, result_index, entry_index) {
+        Ok(note_id) => MineResult {
+            success: true,
+            message: format!("Added {} (note {note_id})", word.unwrap_or_default()),
+        },
+        Err(error) => MineResult {
+            success: false,
+            message: error.to_string(),
+        },
+    }
+}
+
+#[tauri::command]
+fn mine_hover(
+    state: State<'_, AppState>,
+    memory: State<'_, HoverMemory>,
+    result_index: usize,
+    entry_index: usize,
+) -> MineResult {
+    mine_remembered(&state, &memory, result_index, entry_index)
+}
+
+/// The mining shortcut: adds the word shown in the popup, or, when there is none, tells the main
+/// window (which mines the word selected in its own sentence view).
+fn handle_mine_shortcut(app: &AppHandle) {
+    let popup_word = app
+        .try_state::<HoverMemory>()
+        .and_then(|memory| memory.get());
+    let (Some(_), Some(state), Some(memory)) = (
+        popup_word,
+        app.try_state::<AppState>(),
+        app.try_state::<HoverMemory>(),
+    ) else {
+        let _ = app.emit(MINE_EVENT, ());
+        return;
+    };
+    let _ = app.emit(MINE_RESULT_EVENT, mine_remembered(&state, &memory, 0, 0));
 }
 
 #[tauri::command]
@@ -205,7 +266,7 @@ pub fn run() -> tauri::Result<()> {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        let _ = app.emit(MINE_EVENT, ());
+                        handle_mine_shortcut(app);
                     }
                 })
                 .build(),
@@ -221,6 +282,7 @@ pub fn run() -> tauri::Result<()> {
             import_dictionary,
             submit_text,
             get_hover,
+            mine_hover,
             set_hover_mode,
             set_hover_enabled,
             set_ocr_region,
@@ -231,6 +293,7 @@ pub fn run() -> tauri::Result<()> {
 }
 
 fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    app.manage(HoverMemory::default());
     let mut warnings = Vec::new();
     let config_dir = app.path().app_config_dir()?;
     let data_dir = app.path().app_data_dir()?;
@@ -429,4 +492,118 @@ fn spawn_pipeline(
             },
         );
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::anki::test_support::{failure, ok, MockAnki};
+    use crate::config::Config;
+    use crate::dictionary::{DeinflectedEntry, Dictionary, ScanResult};
+    use crate::hover::HoverResult;
+    use crate::sources::ocr::RegionHandle;
+    use crate::types::entry::Entry;
+
+    use super::state::Startup;
+
+    fn state_for(mock: &MockAnki) -> AppState {
+        AppState::new(
+            Config {
+                anki_connect_url: mock.url.clone(),
+                ..Config::default()
+            },
+            Dictionary::open_in_memory().expect("dictionary"),
+            Startup::default(),
+            RegionHandle::default(),
+        )
+    }
+
+    fn remember(memory: &HoverMemory) {
+        memory.set(HoverResult {
+            sentence: "猫が好き".to_string(),
+            word_start: 0,
+            results: vec![ScanResult {
+                source: "猫".to_string(),
+                length: 1,
+                entries: vec![DeinflectedEntry {
+                    entry: Entry {
+                        expression: "猫".to_string(),
+                        reading: "ねこ".to_string(),
+                        meanings: vec!["cat".to_string()],
+                        parts_of_speech: vec!["n".to_string()],
+                        frequency: None,
+                    },
+                    source: "猫".to_string(),
+                    reasons: vec![],
+                }],
+            }],
+            char_bbox: [0, 0, 1, 1],
+            line_bbox: [0, 0, 10, 2],
+            vertical: false,
+        });
+    }
+
+    #[test]
+    fn a_successful_card_names_the_word_and_the_note() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(4242))]);
+        let state = state_for(&mock);
+        let memory = HoverMemory::default();
+        remember(&memory);
+
+        assert_eq!(
+            mine_remembered(&state, &memory, 0, 0),
+            MineResult {
+                success: true,
+                message: "Added 猫 (note 4242)".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn a_failed_card_reports_the_reason() {
+        let mock = MockAnki::start(vec![
+            ok(json!(["AnkiMining"])),
+            failure("cannot create note because it is a duplicate"),
+        ]);
+        let state = state_for(&mock);
+        let memory = HoverMemory::default();
+        remember(&memory);
+
+        assert_eq!(
+            mine_remembered(&state, &memory, 0, 0),
+            MineResult {
+                success: false,
+                message: "the note is a duplicate".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn mining_with_nothing_shown_says_so() {
+        let mock = MockAnki::start(vec![]);
+        let state = state_for(&mock);
+
+        assert_eq!(
+            mine_remembered(&state, &HoverMemory::default(), 0, 0),
+            MineResult {
+                success: false,
+                message: "there is no word to add: look a word up first".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn the_result_serializes_with_camel_case_keys() {
+        let result = MineResult {
+            success: true,
+            message: "Added".to_string(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(result).expect("serialize"),
+            json!({ "success": true, "message": "Added" })
+        );
+    }
 }

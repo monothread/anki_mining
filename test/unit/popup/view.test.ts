@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderHoverResult } from '../../../src/popup/view';
 import type { HoverResult } from '../../../src/types/hover';
 import { HOVER_RESULT } from '../../support/fixtures';
@@ -63,5 +63,39 @@ describe('renderHoverResult', () => {
         const root = render({ ...HOVER_RESULT, sentence: '<img src=x onerror=alert(1)>', wordStart: 0, results: [] });
 
         expect(root.querySelector('img')).toBeNull();
+    });
+
+    it('adds an "Add to Anki" button per entry when a mining handler is given', () => {
+        const root = document.createElement('div');
+
+        renderHoverResult(root, HOVER_RESULT, { onMine: vi.fn<(r: number, e: number) => void>() });
+
+        const buttons = root.querySelectorAll<HTMLButtonElement>('button.mine');
+        expect(buttons).toHaveLength(1);
+        expect(buttons[0]?.textContent).toBe('Add to Anki');
+    });
+
+    it('reports the position of the chosen entry', () => {
+        const root = document.createElement('div');
+        const onMine = vi.fn<(r: number, e: number) => void>();
+        const second = {
+            ...HOVER_RESULT.results[0],
+            source: '友',
+            length: 1,
+            entries: [
+                { ...HOVER_RESULT.results[0]?.entries[0], source: '友' },
+                { ...HOVER_RESULT.results[0]?.entries[0], source: '友 (2)' },
+            ],
+        } as unknown as HoverResult['results'][number];
+        const result: HoverResult = { ...HOVER_RESULT, results: [HOVER_RESULT.results[0], second] as HoverResult['results'] };
+
+        renderHoverResult(root, result, { onMine });
+        const buttons = root.querySelectorAll<HTMLButtonElement>('button.mine');
+        buttons[2]?.click();
+        buttons[0]?.click();
+
+        expect(buttons).toHaveLength(3);
+        expect(onMine).toHaveBeenNthCalledWith(1, 1, 1);
+        expect(onMine).toHaveBeenNthCalledWith(2, 0, 0);
     });
 });

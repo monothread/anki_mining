@@ -1,5 +1,6 @@
 import { vi } from 'vitest';
 import type { Backend, Unsubscribe } from '../../src/ipc/backend';
+import type { MineResult } from '../../src/types/mine';
 import type { Region } from '../../src/types/region';
 import type { Sentence } from '../../src/types/sentence';
 import { CAT_RESULT, HOVER, STATUS } from './fixtures';
@@ -11,12 +12,14 @@ export interface FakeBackend {
     emitAppError(message: string): void;
     emitOcrRegion(region: Region | null): void;
     emitHoverInfo(message: string): void;
+    emitMineResult(result: MineResult): void;
     unsubscribes: {
         sentence: ReturnType<typeof vi.fn<Unsubscribe>>;
         hotkey: ReturnType<typeof vi.fn<Unsubscribe>>;
         error: ReturnType<typeof vi.fn<Unsubscribe>>;
         region: ReturnType<typeof vi.fn<Unsubscribe>>;
         info: ReturnType<typeof vi.fn<Unsubscribe>>;
+        mine: ReturnType<typeof vi.fn<Unsubscribe>>;
     };
 }
 
@@ -37,12 +40,16 @@ export function createFakeBackend(): FakeBackend {
     let infoHandler: (message: string) => void = () => {
         return undefined;
     };
+    let mineHandler: (result: MineResult) => void = () => {
+        return undefined;
+    };
     const unsubscribes = {
         sentence: vi.fn<Unsubscribe>(),
         hotkey: vi.fn<Unsubscribe>(),
         error: vi.fn<Unsubscribe>(),
         region: vi.fn<Unsubscribe>(),
         info: vi.fn<Unsubscribe>(),
+        mine: vi.fn<Unsubscribe>(),
     };
 
     const backend: Backend = {
@@ -74,6 +81,10 @@ export function createFakeBackend(): FakeBackend {
             errorHandler = handler;
             return Promise.resolve(unsubscribes.error);
         }),
+        onMineResult: vi.fn<Backend['onMineResult']>().mockImplementation((handler) => {
+            mineHandler = handler;
+            return Promise.resolve(unsubscribes.mine);
+        }),
         onHoverInfo: vi.fn<Backend['onHoverInfo']>().mockImplementation((handler) => {
             infoHandler = handler;
             return Promise.resolve(unsubscribes.info);
@@ -94,6 +105,9 @@ export function createFakeBackend(): FakeBackend {
         },
         emitAppError: (message) => {
             errorHandler(message);
+        },
+        emitMineResult: (result) => {
+            mineHandler(result);
         },
         emitHoverInfo: (message) => {
             infoHandler(message);
