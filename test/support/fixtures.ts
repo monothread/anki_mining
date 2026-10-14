@@ -53,6 +53,7 @@ export const STATUS: Status = {
     defaultProfileId: 'default',
     ocrAvailable: true,
     ocrRegion: null,
+    mpvConnected: false,
 };
 
 export const HOVER: HoverStatus = { enabled: true, mode: 'hold', key: 'shift', dwellMs: 300 };

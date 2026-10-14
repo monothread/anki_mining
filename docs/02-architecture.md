@@ -72,7 +72,7 @@ Defined twice and kept in sync by hand: TypeScript in `src/types/` and Rust in `
 `ScreenCapture` and `PointerTracker` are traits with X11 backends; a Wayland backend (portals, layer-shell) is planned for P6-03. Global shortcuts use the Tauri plugin. The core never calls X11 directly.
 
 ## Text sources
-Each emits `{ text, sourceId, timestamp, windowInfo? }` into one channel. Implemented: `ClipboardSource`, `WebSocketSource` (loopback only, 64 KiB limit), `OcrSource` (selected region, reads only when the pixels change and the text is confirmed by two reads). Planned: mpv IPC (P4-02) and an optional browser extension (P4-01).
+Each emits `{ text, sourceId, timestamp, windowInfo? }` into one channel. Implemented: `ClipboardSource`, `WebSocketSource` (loopback only, 64 KiB limit), `OcrSource` (selected region, reads only when the pixels change and the text is confirmed by two reads) and `MpvSource` (mpv JSON IPC socket: exact subtitle text, reconnects when mpv restarts). Planned: an optional browser extension (P4-01).
 
 ## Default "AnkiMining" note type
 Fields: `Expression`, `Reading`, `Meaning`, `Sentence`, `SentenceAudio`, `Picture`, `Frequency`, `Pitch`, `Source`. Created through `createModel` if it does not exist; the field mapping is configurable per profile.

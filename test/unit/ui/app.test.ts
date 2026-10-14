@@ -437,6 +437,24 @@ describe('describeHoverMode', () => {
     });
 });
 
+describe('createApp mpv status', () => {
+    it('shows when mpv is connected', async () => {
+        const { root } = await mount((fake) => {
+            vi.mocked(fake.backend.getStatus).mockResolvedValue({ ...STATUS, mpvConnected: true });
+        });
+
+        expect(text(root, '#status')).toBe(
+            '218898 entries - ws 6677 - ocr idle - mpv connected - Alt+M mines',
+        );
+    });
+
+    it('does not mention mpv when it is not connected', async () => {
+        const { root } = await mount();
+
+        expect(text(root, '#status')).not.toContain('mpv');
+    });
+});
+
 describe('createApp hover controls', () => {
     function button(root: HTMLElement, selector: string): HTMLButtonElement {
         const element = root.querySelector<HTMLButtonElement>(selector);

@@ -5,7 +5,7 @@
 **Last updated:** 2026-10-14
 **Version:** 0.1.0, first version published (hover lookup works on X11; Anki card creation deferred)
 **Current phase:** 3 done as a first version (OCR + hover lookup); Phase 1 done except the Anki parts (P1-13, P1-14), which are deferred by decision
-**Next step:** keep using the app and fix what fails. Candidates, in rough order: mpv exact-text source (P4-02), OCR tuning on real frames (P3-05), then the deferred Anki work (P1-13 check, P1-14, Phase 5) and media on cards (Phase 2).
+**Next step:** media for the cards: the timing of the mpv subtitle (start/end, file path) for exact audio clips (P4-03), screenshot and audio capture (Phase 2), then OCR tuning on real frames (P3-05), AT-SPI evaluation (P4-05) and the deferred Anki work (P1-13 check, P1-14, Phase 5).
 
 ## Status per phase
 
@@ -14,7 +14,7 @@
 | 1 | MVP: clipboard/websocket → popup → Anki | Done except P1-13/P1-14 (Anki, deferred; code and unit tests exist, never tried against a real Anki) |
 | 2 | Media on cards (audio + screenshot) — after Phase 3 | Not started |
 | 3 | Screen OCR + hover lookup (core) | First version done and verified on the real desktop (YouTube, TV banner) and headless; P3-05 (preprocessing) open and optional |
-| 4 | mpv and optional browser extension | Not started |
+| 4 | mpv and optional browser extension | In progress (P4-02 done) |
 | 5 | Profiles and decks per source | Not started |
 | 6 | Polish (pitch, frequency, packaging) | Not started |
 
@@ -78,6 +78,7 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 ## Session log
 | Date | Summary | Tasks completed |
 |---|---|---|
+| 2026-10-14 | P4-02 mpv source. `sources/mpv.rs`: connects to mpv's JSON IPC socket (default `/tmp/mpvsocket`, config `mpvSocket`, empty turns it off; mpv needs `input-ipc-server=/tmp/mpvsocket` in `mpv.conf`), observes `sub-text` and `media-title`, emits one event per subtitle (exact text, no OCR) with the media title, reconnects when mpv restarts, tolerates split messages and multi-byte characters. The header shows "mpv connected". Checked against a real mpv 0.34.1 (`examples/mpv_listen.rs`, generated video with Japanese subtitles in a throwaway root container): three subtitles received, multi-line kept, title right. The subtitle shows in the main overlay window (hover its words there). Timing for audio clips is not captured yet (P4-03). 471 Rust + 114 Vitest tests | P4-02 |
 | 2026-10-14 | P3-15 vertical text. The vertical recognition model (`meiki.text.rec.v0.vertical.32x480.onnx`, 12.9 MB, optional: without it columns are skipped) is ported: columns are scaled to 32 px wide and read in overlapping segments of 420 scaled px, characters are merged by suppression along y, text runs top to bottom. `OcrLine.vertical`, `lines_to_text` reads columns right to left, `ocr::layout` groups neighbouring columns (right to left), `character_at` and the popup placement (`popup_position_beside`) handle columns. Spike: `spikes/ocr/make_vertical*.py`, `run_vertical.py`; accuracy depends strongly on the rendering (clean regular weight 87-94%, bold with outline and noise 76%). 450 Rust + 112 Vitest tests | P3-15 |
 | 2026-10-14 | P3-13 and P3-14. Multi-line text: `ocr::layout` groups stacked lines of similar height and overlapping width into blocks (max 3 lines); `recognize_near` reads the whole block near the cursor and `character_at` joins its lines into one sentence with the right UTF-16 offset (a word may start on one line and end on the next). Real-OCR tests on a generated two-line subtitle (`twoline_1080p.png`). The trigger mode and the on/off switch changed from the header are saved to `config.json` (`hoverMode`, `hoverEnabled`); a file that could not be read is never overwritten and a failed save is reported while the change still applies. 426 Rust + 112 Vitest tests | P3-13, P3-14 |
 | 2026-10-14 | **First version published** to https://github.com/monothread/anki_mining: README written, architecture doc rewritten to match the code, docs updated, models/ONNX Runtime/dictionary kept out of git (downloaded by `scripts/fetch-ocr-models.sh` and by the user) | — |

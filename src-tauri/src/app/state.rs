@@ -52,6 +52,8 @@ pub struct Status {
     pub ocr_available: bool,
     /// Screen area that is being read with OCR, if any.
     pub ocr_region: Option<Region>,
+    /// Whether a running mpv is connected (filled in by the command, which knows the source).
+    pub mpv_connected: bool,
 }
 
 /// Facts about startup that are fixed for the lifetime of the app.
@@ -99,6 +101,7 @@ impl AppState {
             default_profile_id: self.config.default_profile_id.clone(),
             ocr_available: self.startup.ocr_unavailable.is_none(),
             ocr_region: self.ocr_region.get(),
+            mpv_connected: false,
         })
     }
 
@@ -260,6 +263,7 @@ mod tests {
                 default_profile_id: "default".to_string(),
                 ocr_available: true,
                 ocr_region: None,
+                mpv_connected: false,
             }
         );
     }
@@ -279,7 +283,8 @@ mod tests {
                 "websocketPort": null,
                 "defaultProfileId": "default",
                 "ocrAvailable": true,
-                "ocrRegion": null
+                "ocrRegion": null,
+                "mpvConnected": false
             })
         );
     }

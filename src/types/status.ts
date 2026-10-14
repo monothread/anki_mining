@@ -10,6 +10,8 @@ export interface Status {
     ocrAvailable: boolean;
     /** Screen area that is being read, if any. */
     ocrRegion: Region | null;
+    /** Whether a running mpv is connected. */
+    mpvConnected: boolean;
 }
 
 export interface ImportStats {

@@ -110,7 +110,8 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
     const showStatus = (status: Status): void => {
         const port = status.websocketPort === null ? 'off' : String(status.websocketPort);
         const ocr = describeOcr(status.ocrAvailable, status.ocrRegion);
-        statusElement.textContent = `${String(status.dictionaryEntries)} entries - ws ${port} - ${ocr} - ${status.miningHotkey} mines`;
+        const mpv = status.mpvConnected ? ' - mpv connected' : '';
+        statusElement.textContent = `${String(status.dictionaryEntries)} entries - ws ${port} - ${ocr}${mpv} - ${status.miningHotkey} mines`;
         setupElement.hidden = status.dictionaryEntries > 0;
         selectAreaButton.disabled = !status.ocrAvailable;
         stopAreaButton.hidden = status.ocrRegion === null;

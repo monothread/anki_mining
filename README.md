@@ -21,7 +21,8 @@ tried against a real Anki yet. See [docs/PROGRESS.md](docs/PROGRESS.md).
 - **Triggers**, switchable in the app (and remembered): hold **Shift** over the text, or let the cursor
   rest for about 300 ms. Pause the video first: a playing video changes the subtitle faster than a lookup.
 - **Everything is local.** OCR, tokenizer and dictionary run on your machine; nothing is sent anywhere.
-- **Other text sources** also feed the same overlay: the clipboard, a local websocket
+- **Other text sources** also feed the same overlay: the exact subtitles of **mpv** (add
+  `input-ipc-server=/tmp/mpvsocket` to `mpv.conf`; the header shows "mpv connected"), the clipboard, a local websocket
   (`ws://127.0.0.1:6677`, compatible with Textractor/owocr-style senders), a text box, and an optional
   "read a screen region" mode.
 - Handles inflected verbs and adjectives (`行きました` → `行く`, `polite < past`) and long lines (web pages).

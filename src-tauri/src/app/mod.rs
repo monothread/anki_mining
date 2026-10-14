@@ -24,6 +24,7 @@ use crate::normalizer::Normalizer;
 use crate::ocr::meiki::{DETECTION_MODEL, RECOGNITION_MODEL, RUNTIME_LIBRARY};
 use crate::ocr::MeikiEngine;
 use crate::sources::clipboard::ClipboardSource;
+use crate::sources::mpv::{MpvConnection, MpvSource};
 use crate::sources::ocr::{OcrSource, RegionHandle, DEFAULT_POLL_INTERVAL as OCR_POLL_INTERVAL};
 use crate::sources::websocket::WebSocketSource;
 use crate::tokenizer::Tokenizer;
@@ -49,12 +50,17 @@ const OCR_DIR_VARIABLE: &str = "ANKI_MINING_OCR_DIR";
 /// Lets commands push text into the same pipeline the sources feed.
 struct TextSink(Sender<TextSourceEvent>);
 
+/// Tells whether the mpv source is connected; `None` when the source is off.
+struct MpvStatus(Option<MpvConnection>);
+
 /// Keeps the running sources alive for the lifetime of the app.
 struct RunningSources(#[allow(dead_code)] Mutex<Vec<Box<dyn TextSource>>>);
 
 #[tauri::command]
-fn get_status(state: State<'_, AppState>) -> Result<Status, String> {
-    state.status().map_err(|error| error.to_string())
+fn get_status(state: State<'_, AppState>, mpv: State<'_, MpvStatus>) -> Result<Status, String> {
+    let mut status = state.status().map_err(|error| error.to_string())?;
+    status.mpv_connected = mpv.0.as_ref().is_some_and(MpvConnection::is_connected);
+    Ok(status)
 }
 
 #[tauri::command]
@@ -236,7 +242,8 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let tokenizer = Arc::new(Tokenizer::new()?);
 
     let (sender, receiver) = mpsc::channel::<TextSourceEvent>();
-    let (mut sources, websocket_port) = start_sources(&config, &sender, &mut warnings);
+    let (mut sources, websocket_port, mpv_connection) =
+        start_sources(&config, &sender, &mut warnings);
     let ocr_region = RegionHandle::default();
     let ocr_unavailable = match start_ocr(app, &sender, &ocr_region) {
         Ok(source) => {
@@ -259,6 +266,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     spawn_pipeline(app.clone(), receiver, Arc::clone(&tokenizer));
     app.manage(TextSink(sender));
     app.manage(RunningSources(Mutex::new(sources)));
+    app.manage(MpvStatus(mpv_connection));
     app.manage(Arc::clone(&hover_control));
     app.manage(AppState::new(
         config,
@@ -289,7 +297,7 @@ fn start_sources(
     config: &Config,
     sender: &Sender<TextSourceEvent>,
     warnings: &mut Vec<String>,
-) -> (Vec<Box<dyn TextSource>>, Option<u16>) {
+) -> (Vec<Box<dyn TextSource>>, Option<u16>, Option<MpvConnection>) {
     let mut running: Vec<Box<dyn TextSource>> = Vec::new();
     let mut websocket_port = None;
 
@@ -307,7 +315,19 @@ fn start_sources(
         Ok(()) => running.push(Box::new(clipboard)),
         Err(error) => warnings.push(error.to_string()),
     }
-    (running, websocket_port)
+
+    let mut mpv_connection = None;
+    if !config.mpv_socket.is_empty() {
+        let mut mpv = MpvSource::new(Path::new(&config.mpv_socket));
+        match mpv.start(sender.clone()) {
+            Ok(()) => {
+                mpv_connection = Some(mpv.connection());
+                running.push(Box::new(mpv));
+            }
+            Err(error) => warnings.push(error.to_string()),
+        }
+    }
+    (running, websocket_port, mpv_connection)
 }
 
 /// Starts the hover lookup when the OCR files are there; otherwise tells the user why not.

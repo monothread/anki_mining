@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::hover::trigger::{TriggerKey, TriggerMode, DEFAULT_DWELL_MS};
+use crate::sources::mpv::DEFAULT_SOCKET as DEFAULT_MPV_SOCKET;
 use crate::types::profile::{default_field_mapping, Profile, ProfileMatch};
 
 pub const DEFAULT_ANKI_CONNECT_URL: &str = "http://127.0.0.1:8765";
@@ -42,6 +43,8 @@ pub enum ConfigError {
 pub struct Config {
     pub anki_connect_url: String,
     pub websocket_port: u16,
+    /// Path of mpv's IPC socket (`input-ipc-server` in `mpv.conf`); empty turns the mpv source off.
+    pub mpv_socket: String,
     /// Global shortcut that mines the word currently selected in the overlay.
     pub mining_hotkey: String,
     /// How the lookup under the mouse cursor starts: hold a key, or let the cursor rest.
@@ -61,6 +64,7 @@ impl Default for Config {
         Config {
             anki_connect_url: DEFAULT_ANKI_CONNECT_URL.to_string(),
             websocket_port: DEFAULT_WEBSOCKET_PORT,
+            mpv_socket: DEFAULT_MPV_SOCKET.to_string(),
             mining_hotkey: DEFAULT_MINING_HOTKEY.to_string(),
             hover_mode: TriggerMode::Hold,
             hover_key: TriggerKey::Shift,
@@ -144,6 +148,12 @@ impl Config {
         }
         if self.websocket_port == 0 {
             problems.push("websocketPort must be between 1 and 65535".to_string());
+        }
+        if !self.mpv_socket.is_empty() && !Path::new(&self.mpv_socket).is_absolute() {
+            problems.push(format!(
+                "mpvSocket must be an absolute path or empty (got `{}`)",
+                self.mpv_socket
+            ));
         }
         if self.mining_hotkey.trim().is_empty() {
             problems.push("miningHotkey must not be empty".to_string());
@@ -229,6 +239,7 @@ mod tests {
 
         assert_eq!(config.anki_connect_url, "http://127.0.0.1:8765");
         assert_eq!(config.websocket_port, 6677);
+        assert_eq!(config.mpv_socket, "/tmp/mpvsocket");
         assert_eq!(config.mining_hotkey, "Alt+M");
         assert_eq!(config.hover_mode, TriggerMode::Hold);
         assert_eq!(config.hover_key, TriggerKey::Shift);
@@ -247,6 +258,7 @@ mod tests {
 
         assert_eq!(value["ankiConnectUrl"], json!("http://127.0.0.1:8765"));
         assert_eq!(value["websocketPort"], json!(6677));
+        assert_eq!(value["mpvSocket"], json!("/tmp/mpvsocket"));
         assert_eq!(value["miningHotkey"], json!("Alt+M"));
         assert_eq!(value["hoverMode"], json!("hold"));
         assert_eq!(value["hoverKey"], json!("shift"));
@@ -601,5 +613,42 @@ mod tests {
             };
             assert!(config.validate().is_ok());
         }
+    }
+
+    #[test]
+    fn the_mpv_socket_can_be_changed_or_turned_off() {
+        let custom = Config {
+            mpv_socket: "/run/user/1000/mpv.sock".to_string(),
+            ..Config::default()
+        };
+        let off = Config {
+            mpv_socket: String::new(),
+            ..Config::default()
+        };
+
+        assert!(custom.validate().is_ok());
+        assert!(off.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_a_relative_mpv_socket_path() {
+        let config = Config {
+            mpv_socket: "mpvsocket".to_string(),
+            ..Config::default()
+        };
+
+        assert_eq!(
+            invalid_messages(&config),
+            vec!["mpvSocket must be an absolute path or empty (got `mpvsocket`)"]
+        );
+    }
+
+    #[test]
+    fn the_mpv_socket_is_read_from_the_file() {
+        let directory = tempdir().expect("temp dir");
+        let path = directory.path().join("config.json");
+        fs::write(&path, r#"{ "mpvSocket": "/tmp/other" }"#).expect("write");
+
+        assert_eq!(Config::load(&path).expect("load").mpv_socket, "/tmp/other");
     }
 }
