@@ -104,5 +104,4 @@ export const SETTINGS: MiningSettings = {
     audioSeconds: 8,
     duplicatePolicy: 'skip',
     closeToTray: false,
-    dictionaryLanguage: 'pt',
 };

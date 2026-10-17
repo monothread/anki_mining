@@ -1,6 +1,5 @@
 pub mod deinflect;
 mod import;
-mod portuguese;
 
 use std::io::Read;
 use std::path::Path;
@@ -12,10 +11,9 @@ use thiserror::Error;
 use crate::types::entry::Entry;
 
 pub use import::ImportStats;
-pub use portuguese::PortugueseStats;
 
 /// Version of the dictionary that is bundled with the app; raise it when the bundled data changes.
-pub const BUNDLE_VERSION: u32 = 1;
+pub const BUNDLE_VERSION: u32 = 2;
 /// The `meta` key that tells where the entries came from (`bundled:<version>` or nothing).
 pub const SOURCE_KEY: &str = "source";
 
@@ -53,17 +51,6 @@ fn needs_bundled_copy(target: &Path) -> Result<bool, DictionaryError> {
         .strip_prefix("bundled:")
         .and_then(|version| version.parse::<u32>().ok());
     Ok(installed.is_some_and(|version| version < BUNDLE_VERSION))
-}
-
-/// The language of the meanings that are shown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum Language {
-    #[default]
-    #[serde(rename = "en")]
-    English,
-    /// Portuguese meanings first (where the dictionary has them), then the English ones.
-    #[serde(rename = "pt")]
-    Portuguese,
 }
 
 /// Longest text (in characters) tried by [`Dictionary::scan`].
@@ -114,7 +101,6 @@ const WILDCARD: &str = "*";
 /// JMdict-backed dictionary stored in SQLite.
 pub struct Dictionary {
     connection: Connection,
-    language: Language,
 }
 
 impl Dictionary {
@@ -128,28 +114,12 @@ impl Dictionary {
 
     fn from_connection(connection: Connection) -> Result<Dictionary, DictionaryError> {
         import::create_schema(&connection)?;
-        Ok(Dictionary {
-            connection,
-            language: Language::default(),
-        })
+        Ok(Dictionary { connection })
     }
 
     /// Replaces the dictionary contents with a `jmdict-simplified` JSON file.
     pub fn import_jmdict(&mut self, reader: impl Read) -> Result<ImportStats, DictionaryError> {
         import::import_jmdict(&mut self.connection, reader)
-    }
-
-    /// Adds Portuguese meanings from a kaikki.org JSONL dump of the Portuguese Wiktionary.
-    pub fn import_portuguese(
-        &mut self,
-        reader: impl std::io::BufRead,
-    ) -> Result<PortugueseStats, DictionaryError> {
-        portuguese::import(&mut self.connection, reader)
-    }
-
-    /// Chooses the language of the meanings that lookups return.
-    pub fn set_language(&mut self, language: Language) {
-        self.language = language;
     }
 
     /// A value kept in the database next to the entries (e.g. where they came from).
@@ -199,10 +169,8 @@ impl Dictionary {
     /// JMdict tags (e.g. `v1`, `n`) so deinflection can check the word class.
     pub fn lookup(&self, term: &str) -> Result<Vec<Entry>, DictionaryError> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT entry.id, entry.readings, entry.meanings, entry.pos, term.is_kanji,
-                    entry_pt.meanings
+            "SELECT entry.id, entry.readings, entry.meanings, entry.pos, term.is_kanji
              FROM term JOIN entry ON entry.id = term.entry_id
-             LEFT JOIN entry_pt ON entry_pt.id = entry.id
              WHERE term.text = ?1
              ORDER BY entry.common DESC, entry.id ASC",
         )?;
@@ -213,13 +181,12 @@ impl Dictionary {
                 meanings: row.get(2)?,
                 pos: row.get(3)?,
                 matched_kanji: row.get(4)?,
-                portuguese: row.get(5)?,
             })
         })?;
 
         let mut entries = Vec::new();
         for row in rows {
-            entries.push(row?.into_entry(term, self.language)?);
+            entries.push(row?.into_entry(term)?);
         }
         Ok(entries)
     }
@@ -289,11 +256,10 @@ struct EntryRow {
     meanings: String,
     pos: String,
     matched_kanji: bool,
-    portuguese: Option<String>,
 }
 
 impl EntryRow {
-    fn into_entry(self, term: &str, language: Language) -> Result<Entry, DictionaryError> {
+    fn into_entry(self, term: &str) -> Result<Entry, DictionaryError> {
         let readings: Vec<Reading> = self.parse(&self.readings, "readings")?;
         let reading = if self.matched_kanji {
             reading_for_kanji(&readings, term)
@@ -304,27 +270,13 @@ impl EntryRow {
         Ok(Entry {
             expression: term.to_string(),
             reading,
-            meanings: self.meanings_in(language)?,
+            meanings: self.parse(&self.meanings, "meanings")?,
             parts_of_speech: self.parse(&self.pos, "pos")?,
             frequency: None,
         })
     }
 
     /// The English meanings, preceded by the Portuguese ones when that language is chosen.
-    fn meanings_in(&self, language: Language) -> Result<Vec<String>, DictionaryError> {
-        let english: Vec<String> = self.parse(&self.meanings, "meanings")?;
-        let Some(portuguese) = self
-            .portuguese
-            .as_deref()
-            .filter(|_| language == Language::Portuguese)
-        else {
-            return Ok(english);
-        };
-        let mut meanings: Vec<String> = self.parse(portuguese, "meanings_pt")?;
-        meanings.extend(english);
-        Ok(meanings)
-    }
-
     fn parse<T: for<'de> Deserialize<'de>>(
         &self,
         json: &str,
@@ -919,157 +871,6 @@ mod tests {
         assert_eq!(json["entries"][0]["entry"]["partsOfSpeech"], json!(["n"]));
     }
 
-    fn portuguese_dump() -> String {
-        [
-            json!({ "word": "猫", "lang_code": "ja", "pos": "noun", "senses": [{ "glosses": ["gato."] }, { "glosses": ["leitura em hiragana de 猫"] }] }),
-            json!({ "word": "猫", "lang_code": "ja", "pos": "verb", "senses": [{ "glosses": ["não é um verbo"] }] }),
-            json!({ "word": "食べる", "lang_code": "ja", "pos": "verb", "senses": [{ "glosses": ["comer", "ingerir alimento"] }] }),
-            json!({ "word": "ねこ", "lang_code": "ja", "pos": "romanization", "senses": [{ "glosses": ["neko"] }] }),
-            json!({ "word": "palavra", "lang_code": "pt", "pos": "noun", "senses": [{ "glosses": ["fora do japonês"] }] }),
-            json!({ "word": "存在しない", "lang_code": "ja", "pos": "noun", "senses": [{ "glosses": ["sem entrada"] }] }),
-            json!({ "word": "髪", "lang_code": "ja", "pos": "noun", "senses": [{ "glosses": ["cabelo"] }] }),
-            json!({ "word": "髪", "lang_code": "ja", "pos": "noun", "senses": [{ "glosses": ["cabelo"] }, { "glosses": ["pelos da cabeça"] }] }),
-        ]
-        .iter()
-        .map(|row| row.to_string())
-        .collect::<Vec<_>>()
-        .join("\n")
-            + "\n\n"
-    }
-
-    fn with_portuguese(language: Language) -> Dictionary {
-        let mut dictionary = imported();
-        dictionary
-            .import_portuguese(portuguese_dump().as_bytes())
-            .expect("portuguese");
-        dictionary.set_language(language);
-        dictionary
-    }
-
-    #[test]
-    fn the_portuguese_import_reports_what_matched() {
-        let mut dictionary = imported();
-
-        let stats = dictionary
-            .import_portuguese(portuguese_dump().as_bytes())
-            .expect("portuguese");
-
-        // 猫 (noun), 食べる, 存在しない, 髪 and the verb 猫: the verb and 存在しない match nothing.
-        assert_eq!(
-            stats,
-            PortugueseStats {
-                entries: 3,
-                words: 5,
-                unmatched: 2
-            }
-        );
-    }
-
-    #[test]
-    fn english_is_the_default_even_when_portuguese_is_stored() {
-        let dictionary = with_portuguese(Language::English);
-
-        let entries = dictionary.lookup("猫").expect("lookup");
-
-        assert_eq!(
-            entries[0].meanings,
-            vec!["cat; feline".to_string(), "shamisen".to_string()]
-        );
-    }
-
-    #[test]
-    fn portuguese_meanings_come_first_then_the_english_ones() {
-        let dictionary = with_portuguese(Language::Portuguese);
-
-        assert_eq!(
-            dictionary.lookup("猫").expect("lookup")[0].meanings,
-            vec![
-                "gato".to_string(),
-                "cat; feline".to_string(),
-                "shamisen".to_string()
-            ]
-        );
-        assert_eq!(
-            dictionary.lookup("食べる").expect("lookup")[0].meanings,
-            vec!["comer; ingerir alimento".to_string(), "to eat".to_string()]
-        );
-    }
-
-    #[test]
-    fn repeated_portuguese_meanings_are_stored_once() {
-        let dictionary = with_portuguese(Language::Portuguese);
-
-        assert_eq!(
-            dictionary.lookup("髪").expect("lookup")[0].meanings,
-            vec![
-                "cabelo".to_string(),
-                "pelos da cabeça".to_string(),
-                "hair".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn entries_without_portuguese_keep_their_english_meanings() {
-        let dictionary = with_portuguese(Language::Portuguese);
-
-        assert_eq!(
-            dictionary.lookup("紙").expect("lookup")[0].meanings,
-            vec!["paper".to_string()]
-        );
-    }
-
-    #[test]
-    fn portuguese_is_also_used_for_inflected_forms() {
-        let dictionary = with_portuguese(Language::Portuguese);
-
-        let results = dictionary.lookup_deinflected("食べました").expect("lookup");
-
-        assert_eq!(results[0].entry.meanings[0], "comer; ingerir alimento");
-    }
-
-    #[test]
-    fn importing_portuguese_again_replaces_the_previous_meanings() {
-        let mut dictionary = with_portuguese(Language::Portuguese);
-        let other = json!({ "word": "猫", "lang_code": "ja", "pos": "noun", "senses": [{ "glosses": ["bichano"] }] }).to_string();
-
-        dictionary
-            .import_portuguese(other.as_bytes())
-            .expect("again");
-
-        assert_eq!(
-            dictionary.lookup("猫").expect("lookup")[0].meanings[0],
-            "bichano"
-        );
-        assert_eq!(
-            dictionary.lookup("食べる").expect("lookup")[0].meanings,
-            vec!["to eat".to_string()]
-        );
-    }
-
-    #[test]
-    fn importing_the_english_dictionary_again_drops_the_portuguese_meanings() {
-        let mut dictionary = with_portuguese(Language::Portuguese);
-
-        dictionary
-            .import_jmdict(fixture().as_bytes())
-            .expect("import");
-
-        assert_eq!(
-            dictionary.lookup("猫").expect("lookup")[0].meanings,
-            vec!["cat; feline".to_string(), "shamisen".to_string()]
-        );
-    }
-
-    #[test]
-    fn invalid_portuguese_json_is_an_error() {
-        let mut dictionary = imported();
-
-        let result = dictionary.import_portuguese("not json\n".as_bytes());
-
-        assert!(matches!(result, Err(DictionaryError::InvalidJson(_))));
-    }
-
     #[test]
     fn meta_values_are_stored_replaced_and_marked_custom_by_an_import() {
         let mut dictionary = imported();
@@ -1092,23 +893,6 @@ mod tests {
             dictionary.meta("source").expect("meta"),
             Some("custom".to_string())
         );
-    }
-
-    #[test]
-    fn the_language_is_serialized_as_a_short_code() {
-        assert_eq!(
-            serde_json::to_value(Language::English).expect("json"),
-            json!("en")
-        );
-        assert_eq!(
-            serde_json::to_value(Language::Portuguese).expect("json"),
-            json!("pt")
-        );
-        assert_eq!(
-            serde_json::from_value::<Language>(json!("pt")).expect("language"),
-            Language::Portuguese
-        );
-        assert_eq!(Language::default(), Language::English);
     }
 
     fn dictionary_file(

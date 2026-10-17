@@ -61,11 +61,7 @@ chmod +x AnkiMining_0.1.0_amd64.AppImage
 ```
 
 The dictionary is part of the app: nothing has to be downloaded or imported. It has the 218,000 JMdict entries
-with English meanings and, for about 4,800 of them (about 12% of the common words), Portuguese (Brazil)
-meanings from the Portuguese Wiktionary. In **Settings → Dictionary** you choose the language of the meanings:
-Portuguese shows the Portuguese meaning first and the English ones after it; words with no Portuguese meaning
-only have English. (There is no complete Japanese→Portuguese dictionary under a free license; this is the best
-open source that exists.)
+with English meanings.
 
 ## Develop
 
@@ -110,7 +106,6 @@ screenshot, mouse move). More in [docs/PROGRESS.md](docs/PROGRESS.md).
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) 1.31 | Runs the OCR models | MIT |
 | [Lindera](https://github.com/lindera/lindera) with UniDic | Japanese tokenizer | MIT; UniDic has its own license |
 | [JMdict](https://www.edrdg.org/jmdict/j_jmdict.html) via [jmdict-simplified](https://github.com/scriptin/jmdict-simplified) | Dictionary, bundled in the app (English meanings) | CC BY-SA 4.0 |
-| [Portuguese Wiktionary](https://pt.wiktionary.org) via [kaikki.org](https://kaikki.org/ptwiktionary/) (`data/ptwiktionary-ja.jsonl.gz`) | Portuguese meanings, bundled in the app | CC BY-SA 4.0 and GFDL |
 | [Tauri](https://tauri.app) | App framework | MIT / Apache-2.0 |
 
 The models and the ONNX Runtime library are not stored in this repository; `scripts/fetch-ocr-models.sh`

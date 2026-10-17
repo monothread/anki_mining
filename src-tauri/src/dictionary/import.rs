@@ -74,10 +74,6 @@ const SCHEMA: &str = "
         code TEXT PRIMARY KEY,
         description TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS entry_pt (
-        id INTEGER PRIMARY KEY,
-        meanings TEXT NOT NULL
-    );
     CREATE TABLE IF NOT EXISTS meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -95,7 +91,7 @@ pub(super) fn import_jmdict(
 ) -> Result<ImportStats, DictionaryError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(
-        "DELETE FROM term; DELETE FROM entry; DELETE FROM entry_pt; DELETE FROM tag;
+        "DELETE FROM term; DELETE FROM entry; DELETE FROM tag;
          INSERT INTO meta (key, value) VALUES ('source', 'custom')
          ON CONFLICT(key) DO UPDATE SET value = 'custom';",
     )?;

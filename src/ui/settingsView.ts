@@ -1,6 +1,6 @@
 import { DEFAULT_FIELD_MAPPING, MINING_FIELDS } from '../types/profile';
 import type { MiningField, Profile } from '../types/profile';
-import type { DictionaryLanguage, DuplicatePolicy, MiningSettings } from '../types/settings';
+import type { DuplicatePolicy, MiningSettings } from '../types/settings';
 
 export interface SettingsHandlers {
     onSave: (settings: MiningSettings) => void;
@@ -163,7 +163,6 @@ export function readSettings(root: HTMLElement): MiningSettings {
         audioSeconds: Number.isNaN(seconds) ? MIN_AUDIO_SECONDS : seconds,
         duplicatePolicy: select('duplicatePolicy').value === 'allow' ? 'allow' : 'skip',
         closeToTray: input(root, 'closeToTray').checked,
-        dictionaryLanguage: select('dictionaryLanguage').value === 'en' ? 'en' : 'pt',
     };
 }
 
@@ -195,22 +194,6 @@ function duplicateSelect(policy: DuplicatePolicy): HTMLSelectElement {
     return select;
 }
 
-function languageSelect(language: DictionaryLanguage): HTMLSelectElement {
-    const select = element('select');
-    select.name = 'dictionaryLanguage';
-    const choices: [DictionaryLanguage, string][] = [
-        ['pt', 'Portuguese (Brazil), English when missing'],
-        ['en', 'English'],
-    ];
-    for (const [value, label] of choices) {
-        const option = element('option', undefined, label);
-        option.value = value;
-        option.selected = value === language;
-        select.append(option);
-    }
-    return select;
-}
-
 function audioSecondsInput(seconds: number): HTMLInputElement {
     const input = element('input');
     input.type = 'number';
@@ -235,13 +218,6 @@ export function renderSettings(root: HTMLElement, settings: MiningSettings, hand
         labelled('Default profile', defaultProfileSelect(settings)),
     );
     root.append(general);
-
-    const dictionary = element('fieldset', 'dictionary');
-    dictionary.append(
-        element('legend', undefined, 'Dictionary'),
-        labelled('Meanings in', languageSelect(settings.dictionaryLanguage), 'Portuguese meanings exist for a part of the words only'),
-    );
-    root.append(dictionary);
 
     const application = element('fieldset', 'application');
     application.append(

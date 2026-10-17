@@ -10,7 +10,6 @@ mod file;
 pub use file::ConfigFile;
 use thiserror::Error;
 
-use crate::dictionary::Language;
 use crate::hover::trigger::{TriggerKey, TriggerMode, DEFAULT_DWELL_MS};
 use crate::sources::mpv::DEFAULT_SOCKET as DEFAULT_MPV_SOCKET;
 use crate::types::profile::{default_field_mapping, Profile, ProfileMatch};
@@ -70,8 +69,6 @@ pub struct Config {
     pub duplicate_policy: DuplicatePolicy,
     /// Whether closing the window keeps the app running in the system tray.
     pub close_to_tray: bool,
-    /// The language of the meanings shown for a word.
-    pub dictionary_language: Language,
     pub default_profile_id: String,
     pub profiles: Vec<Profile>,
 }
@@ -92,7 +89,6 @@ impl Default for Config {
             audio_seconds: 8,
             duplicate_policy: DuplicatePolicy::Skip,
             close_to_tray: false,
-            dictionary_language: Language::Portuguese,
             default_profile_id: DEFAULT_PROFILE_ID.to_string(),
             profiles: vec![default_profile()],
         }
@@ -110,7 +106,6 @@ pub struct MiningSettings {
     pub audio_seconds: u32,
     pub duplicate_policy: DuplicatePolicy,
     pub close_to_tray: bool,
-    pub dictionary_language: Language,
 }
 
 impl MiningSettings {
@@ -123,7 +118,6 @@ impl MiningSettings {
             audio_seconds: config.audio_seconds,
             duplicate_policy: config.duplicate_policy,
             close_to_tray: config.close_to_tray,
-            dictionary_language: config.dictionary_language,
         }
     }
 
@@ -135,7 +129,6 @@ impl MiningSettings {
         config.audio_seconds = self.audio_seconds;
         config.duplicate_policy = self.duplicate_policy;
         config.close_to_tray = self.close_to_tray;
-        config.dictionary_language = self.dictionary_language;
     }
 }
 
@@ -324,7 +317,6 @@ mod tests {
         assert_eq!(config.audio_seconds, 8);
         assert_eq!(config.duplicate_policy, DuplicatePolicy::Skip);
         assert!(!config.close_to_tray);
-        assert_eq!(config.dictionary_language, Language::Portuguese);
         assert_eq!(config.default_profile_id, "default");
         assert_eq!(config.profiles, vec![default_profile()]);
         assert_eq!(config.profiles[0].deck_name, "Mining");
@@ -349,7 +341,6 @@ mod tests {
         assert_eq!(value["audioSeconds"], json!(8));
         assert_eq!(value["duplicatePolicy"], json!("skip"));
         assert_eq!(value["closeToTray"], json!(false));
-        assert_eq!(value["dictionaryLanguage"], json!("pt"));
         assert_eq!(value["defaultProfileId"], json!("default"));
         assert_eq!(value["profiles"][0]["deckName"], json!("Mining"));
     }
@@ -746,7 +737,6 @@ mod tests {
         settings.duplicate_policy = DuplicatePolicy::Allow;
         settings.screenshot_on_cards = false;
         settings.close_to_tray = true;
-        settings.dictionary_language = Language::English;
 
         settings.clone().apply_to(&mut config);
 
@@ -757,8 +747,6 @@ mod tests {
         assert_eq!(value["duplicatePolicy"], json!("allow"));
         assert_eq!(value["screenshotOnCards"], json!(false));
         assert_eq!(value["closeToTray"], json!(true));
-        assert_eq!(value["dictionaryLanguage"], json!("en"));
-        assert_eq!(config.dictionary_language, Language::English);
         assert!(config.close_to_tray);
         assert_eq!(value["defaultProfileId"], json!("default"));
         assert_eq!(value["profiles"][0]["match"]["windowTitle"], json!(null));

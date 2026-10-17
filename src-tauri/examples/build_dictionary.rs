@@ -1,7 +1,6 @@
-//! Builds the dictionary that is bundled with the app: JMdict (English) plus the Portuguese
-//! meanings from the Portuguese Wiktionary.
+//! Builds the dictionary that is bundled with the app from a `jmdict-simplified` JSON file.
 //!
-//! Usage: cargo run --release --example build_dictionary -- <jmdict.json> <ptwiktionary.jsonl> <output.db>
+//! Usage: cargo run --release --example build_dictionary -- <jmdict.json> <output.db>
 
 use std::env;
 use std::fs::{self, File};
@@ -13,11 +12,11 @@ use anki_mining_lib::dictionary::{Dictionary, BUNDLE_VERSION, SOURCE_KEY};
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = env::args().skip(1).collect();
-    let [jmdict, portuguese, output] = arguments.as_slice() else {
-        eprintln!("usage: build_dictionary <jmdict.json> <ptwiktionary.jsonl> <output.db>");
+    let [jmdict, output] = arguments.as_slice() else {
+        eprintln!("usage: build_dictionary <jmdict.json> <output.db>");
         return ExitCode::from(2);
     };
-    match run(Path::new(jmdict), Path::new(portuguese), Path::new(output)) {
+    match run(Path::new(jmdict), Path::new(output)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("error: {message}");
@@ -26,25 +25,18 @@ fn main() -> ExitCode {
     }
 }
 
-fn open(path: &Path) -> Result<BufReader<File>, String> {
-    File::open(path)
+fn run(jmdict: &Path, output: &Path) -> Result<(), String> {
+    let file = File::open(jmdict)
         .map(BufReader::new)
-        .map_err(|error| format!("cannot open {}: {error}", path.display()))
-}
-
-fn run(jmdict: &Path, portuguese: &Path, output: &Path) -> Result<(), String> {
+        .map_err(|error| format!("cannot open {}: {error}", jmdict.display()))?;
     if output.exists() {
         fs::remove_file(output).map_err(|error| error.to_string())?;
     }
     let mut dictionary = Dictionary::open(output).map_err(|error| error.to_string())?;
-    let english = dictionary
-        .import_jmdict(open(jmdict)?)
+    let stats = dictionary
+        .import_jmdict(file)
         .map_err(|error| error.to_string())?;
-    println!("JMdict: {english:?}");
-    let portuguese = dictionary
-        .import_portuguese(open(portuguese)?)
-        .map_err(|error| error.to_string())?;
-    println!("Portuguese: {portuguese:?}");
+    println!("JMdict: {stats:?}");
     dictionary
         .set_meta(SOURCE_KEY, &format!("bundled:{BUNDLE_VERSION}"))
         .map_err(|error| error.to_string())

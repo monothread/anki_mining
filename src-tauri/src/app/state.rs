@@ -102,8 +102,6 @@ impl AppState {
         ocr_region: RegionHandle,
     ) -> AppState {
         let anki = AnkiClient::new(&config.anki_connect_url);
-        let mut dictionary = dictionary;
-        dictionary.set_language(config.dictionary_language);
         AppState {
             config: Arc::new(ConfigFile::new(None, config)),
             dictionary: Mutex::new(dictionary),
@@ -129,12 +127,8 @@ impl AppState {
 
     /// Replaces the settings about cards. Nothing changes when they are not valid.
     pub fn save_settings(&self, settings: MiningSettings) -> Result<MiningSettings, String> {
-        let language = settings.dictionary_language;
         self.config
             .update_checked(|config| settings.apply_to(config))?;
-        self.lock_dictionary()
-            .map_err(|error| error.to_string())?
-            .set_language(language);
         Ok(self.settings())
     }
 
@@ -1204,63 +1198,6 @@ mod tests {
         assert_eq!(
             samples.iter().filter(|sample| **sample == 9000).count(),
             2_400
-        );
-    }
-
-    fn state_with_portuguese(language: crate::dictionary::Language) -> AppState {
-        let mut dictionary = dictionary();
-        dictionary
-            .import_portuguese(
-                r#"{"word":"猫","lang_code":"ja","pos":"noun","senses":[{"glosses":["gato."]}]}"#
-                    .as_bytes(),
-            )
-            .expect("portuguese");
-        AppState::new(
-            Config {
-                dictionary_language: language,
-                ..Config::default()
-            },
-            dictionary,
-            Startup::default(),
-            RegionHandle::default(),
-        )
-    }
-
-    #[test]
-    fn meanings_follow_the_language_of_the_config() {
-        let portuguese = state_with_portuguese(crate::dictionary::Language::Portuguese);
-        let english = state_with_portuguese(crate::dictionary::Language::English);
-
-        let in_portuguese = portuguese.scan_at("猫", 0).expect("scan");
-        let in_english = english.scan_at("猫", 0).expect("scan");
-
-        assert_eq!(
-            in_portuguese[0].entries[0].entry.meanings,
-            vec!["gato".to_string(), "cat".to_string()]
-        );
-        assert_eq!(
-            in_english[0].entries[0].entry.meanings,
-            vec!["cat".to_string()]
-        );
-    }
-
-    #[test]
-    fn saving_the_language_changes_the_meanings_at_once() {
-        let state = state_with_portuguese(crate::dictionary::Language::Portuguese);
-        let mut settings = state.settings();
-        settings.dictionary_language = crate::dictionary::Language::English;
-
-        state.save_settings(settings).expect("saved");
-
-        assert_eq!(
-            state.scan_at("猫", 0).expect("scan")[0].entries[0]
-                .entry
-                .meanings,
-            vec!["cat".to_string()]
-        );
-        assert_eq!(
-            state.settings().dictionary_language,
-            crate::dictionary::Language::English
         );
     }
 }
