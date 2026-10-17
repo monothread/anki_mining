@@ -3,6 +3,7 @@ import type { Backend, Unsubscribe } from '../../src/ipc/backend';
 import type { MineResult } from '../../src/types/mine';
 import type { Region } from '../../src/types/region';
 import type { Sentence } from '../../src/types/sentence';
+import type { UpdateInfo } from '../../src/types/update';
 import { CAT_RESULT, HOVER, SETTINGS, STATUS } from './fixtures';
 
 export interface FakeBackend {
@@ -13,6 +14,7 @@ export interface FakeBackend {
     emitOcrRegion(region: Region | null): void;
     emitHoverInfo(message: string): void;
     emitMineResult(result: MineResult): void;
+    emitUpdateAvailable(update: UpdateInfo): void;
     unsubscribes: {
         sentence: ReturnType<typeof vi.fn<Unsubscribe>>;
         hotkey: ReturnType<typeof vi.fn<Unsubscribe>>;
@@ -20,6 +22,7 @@ export interface FakeBackend {
         region: ReturnType<typeof vi.fn<Unsubscribe>>;
         info: ReturnType<typeof vi.fn<Unsubscribe>>;
         mine: ReturnType<typeof vi.fn<Unsubscribe>>;
+        update: ReturnType<typeof vi.fn<Unsubscribe>>;
     };
 }
 
@@ -43,6 +46,9 @@ export function createFakeBackend(): FakeBackend {
     let mineHandler: (result: MineResult) => void = () => {
         return undefined;
     };
+    let updateHandler: (update: UpdateInfo) => void = () => {
+        return undefined;
+    };
     const unsubscribes = {
         sentence: vi.fn<Unsubscribe>(),
         hotkey: vi.fn<Unsubscribe>(),
@@ -50,6 +56,7 @@ export function createFakeBackend(): FakeBackend {
         region: vi.fn<Unsubscribe>(),
         info: vi.fn<Unsubscribe>(),
         mine: vi.fn<Unsubscribe>(),
+        update: vi.fn<Unsubscribe>(),
     };
 
     const backend: Backend = {
@@ -80,6 +87,12 @@ export function createFakeBackend(): FakeBackend {
                     return false;
                 }),
             );
+        }),
+        checkUpdate: vi.fn<Backend['checkUpdate']>().mockResolvedValue(null),
+        installUpdate: vi.fn<Backend['installUpdate']>().mockResolvedValue(undefined),
+        onUpdateAvailable: vi.fn<Backend['onUpdateAvailable']>().mockImplementation((handler) => {
+            updateHandler = handler;
+            return Promise.resolve(unsubscribes.update);
         }),
         speak: vi.fn<Backend['speak']>().mockResolvedValue(undefined),
         submitText: vi.fn<Backend['submitText']>().mockResolvedValue(undefined),
@@ -124,6 +137,9 @@ export function createFakeBackend(): FakeBackend {
         },
         emitMineResult: (result) => {
             mineHandler(result);
+        },
+        emitUpdateAvailable: (update) => {
+            updateHandler(update);
         },
         emitHoverInfo: (message) => {
             infoHandler(message);

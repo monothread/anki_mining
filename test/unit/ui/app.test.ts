@@ -968,5 +968,98 @@ describe('createApp window controls', () => {
         expect(root.querySelector('.token.known')).toBeNull();
         expect(root.querySelector<HTMLButtonElement>('button.mine')?.disabled).toBe(false);
     });
+
+    it('shows a banner when the app found a newer version and installs it on request', async () => {
+        const { root, fake } = await mount();
+        const banner = root.querySelector<HTMLElement>('#update');
+        expect(banner?.hidden).toBe(true);
+
+        fake.emitUpdateAvailable({ version: '0.2.0', currentVersion: '0.1.0', notes: null });
+
+        expect(banner?.hidden).toBe(false);
+        expect(text(root, '#update-text')).toBe('Version 0.2.0 is available (you have 0.1.0).');
+
+        root.querySelector<HTMLButtonElement>('#update-install')?.click();
+
+        expect(fake.backend.installUpdate).toHaveBeenCalledTimes(1);
+        expect(root.querySelector<HTMLButtonElement>('#update-install')?.disabled).toBe(true);
+        expect(text(root, '#update-install')).toBe('Installing\u2026');
+    });
+
+    it('lets the user hide the banner for now', async () => {
+        const { root, fake } = await mount();
+        fake.emitUpdateAvailable({ version: '0.2.0', currentVersion: '0.1.0', notes: 'x' });
+
+        root.querySelector<HTMLButtonElement>('#update-later')?.click();
+
+        expect(root.querySelector<HTMLElement>('#update')?.hidden).toBe(true);
+    });
+
+    it('shows why an update could not be installed and lets the user try again', async () => {
+        const { root, fake } = await mount((created) => {
+            vi.mocked(created.backend.installUpdate).mockRejectedValue('the signature does not match');
+        });
+        fake.emitUpdateAvailable({ version: '0.2.0', currentVersion: '0.1.0', notes: null });
+
+        root.querySelector<HTMLButtonElement>('#update-install')?.click();
+        await vi.waitFor(() => {
+            expect(text(root, '#message')).toBe('the signature does not match');
+        });
+
+        expect(root.querySelector<HTMLButtonElement>('#update-install')?.disabled).toBe(false);
+        expect(text(root, '#update-install')).toBe('Install and restart');
+    });
+
+    it('checks for updates from the settings and says when this is the latest version', async () => {
+        const { root, fake } = await mount();
+        root.querySelector<HTMLButtonElement>('#open-settings')?.click();
+        await vi.waitFor(() => {
+            expect(root.querySelector('.check-now')).not.toBeNull();
+        });
+
+        root.querySelector<HTMLButtonElement>('.check-now')?.click();
+        await vi.waitFor(() => {
+            expect(text(root, '#message')).toBe('You have the latest version');
+        });
+
+        expect(fake.backend.checkUpdate).toHaveBeenCalledTimes(1);
+        expect(root.querySelector<HTMLElement>('#update')?.hidden).toBe(true);
+    });
+
+    it('shows the banner when the check from the settings finds a newer version', async () => {
+        const { root } = await mount((created) => {
+            vi.mocked(created.backend.checkUpdate).mockResolvedValue({
+                version: '0.3.0',
+                currentVersion: '0.1.0',
+                notes: null,
+            });
+        });
+        root.querySelector<HTMLButtonElement>('#open-settings')?.click();
+        await vi.waitFor(() => {
+            expect(root.querySelector('.check-now')).not.toBeNull();
+        });
+
+        root.querySelector<HTMLButtonElement>('.check-now')?.click();
+        await vi.waitFor(() => {
+            expect(root.querySelector<HTMLElement>('#update')?.hidden).toBe(false);
+        });
+
+        expect(text(root, '#message')).toBe('Version 0.3.0 is available');
+    });
+
+    it('shows why the check failed', async () => {
+        const { root } = await mount((created) => {
+            vi.mocked(created.backend.checkUpdate).mockRejectedValue('no network');
+        });
+        root.querySelector<HTMLButtonElement>('#open-settings')?.click();
+        await vi.waitFor(() => {
+            expect(root.querySelector('.check-now')).not.toBeNull();
+        });
+
+        root.querySelector<HTMLButtonElement>('.check-now')?.click();
+        await vi.waitFor(() => {
+            expect(text(root, '#message')).toBe('no network');
+        });
+    });
 });
 

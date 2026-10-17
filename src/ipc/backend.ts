@@ -9,6 +9,7 @@ import type { ScanResult } from '../types/scan';
 import type { Sentence } from '../types/sentence';
 import type { MiningSettings } from '../types/settings';
 import type { ImportStats, MetadataStats, Status } from '../types/status';
+import type { UpdateInfo } from '../types/update';
 
 /** Removes the event subscription it was returned for. */
 export type Unsubscribe = () => void;
@@ -33,6 +34,12 @@ export interface Backend {
     importYomitan: (path: string) => Promise<MetadataStats>;
     /** For each word, whether a card of it is already in the deck (rejects when Anki cannot be reached). */
     knownWords: (words: string[]) => Promise<boolean[]>;
+    /** Asks GitHub whether a newer version exists; null when this is the latest. */
+    checkUpdate: () => Promise<UpdateInfo | null>;
+    /** Downloads and installs the newer version, then restarts the app. */
+    installUpdate: () => Promise<void>;
+    /** The app found a newer version a little after it started. */
+    onUpdateAvailable: (handler: (update: UpdateInfo) => void) => Promise<Unsubscribe>;
     /** Reads a text aloud with the synthesized voice. */
     speak: (text: string) => Promise<void>;
     submitText: (text: string) => Promise<void>;
@@ -92,6 +99,17 @@ export const tauriBackend: Backend = {
     },
     knownWords: async (words) => {
         return invoke<boolean[]>('known_words', { words });
+    },
+    checkUpdate: async () => {
+        return invoke<UpdateInfo | null>('check_update');
+    },
+    installUpdate: async () => {
+        await invoke('install_update');
+    },
+    onUpdateAvailable: async (handler) => {
+        return listen<UpdateInfo>('update-available', (message) => {
+            handler(message.payload);
+        });
     },
     speak: async (text) => {
         await invoke('speak_text', { text });

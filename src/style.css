@@ -386,3 +386,26 @@ input {
         transform: rotate(360deg);
     }
 }
+
+.update {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    background: rgba(108, 182, 255, 0.18);
+}
+
+.update[hidden] {
+    display: none;
+}
+
+.update span {
+    flex: 1;
+}
+
+.check-updates {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}

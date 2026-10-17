@@ -8,6 +8,9 @@
 # Run it through the dev container: scripts/dev.sh exec scripts/build-dictionary.sh
 set -euo pipefail
 
+# `python3` on Linux; Windows has `python`.
+PYTHON="$(command -v python3 || command -v python)"
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${ROOT}/src-tauri/resources/dictionary"
 WORK="${ROOT}/.cache/dictionary-build"
@@ -49,7 +52,7 @@ fi
 
 fetch_verified "${JMDICT_URL}" "${WORK}/jmdict-eng.zip" "${JMDICT_ZIP_SHA256}"
 fetch_verified "${ACCENTS_URL}" "${WORK}/accents.txt" "${ACCENTS_SHA256}"
-python3 -m zipfile -e "${WORK}/jmdict-eng.zip" "${WORK}"
+"${PYTHON}" -m zipfile -e "${WORK}/jmdict-eng.zip" "${WORK}"
 JSON="$(ls "${WORK}"/jmdict-eng-*.json | head -1)"
 gzip -dc "${FREQUENCY_GZ}" > "${WORK}/frequency-ja.tsv"
 

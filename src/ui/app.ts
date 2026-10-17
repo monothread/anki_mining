@@ -5,6 +5,7 @@ import type { Region } from '../types/region';
 import type { DeinflectedEntry, ScanResult } from '../types/scan';
 import type { Sentence } from '../types/sentence';
 import type { Status } from '../types/status';
+import type { UpdateInfo } from '../types/update';
 import type { Token } from '../types/token';
 import { markAdded, markKnown } from './known';
 import { renderLookup } from './lookupView';
@@ -45,6 +46,11 @@ export interface AppView {
 }
 
 const TEMPLATE = `
+<div id="update" class="update" role="status" hidden>
+    <span id="update-text"></span>
+    <button type="button" id="update-install" class="action">Install and restart</button>
+    <button type="button" id="update-later" class="action">Later</button>
+</div>
 <header class="bar" data-tauri-drag-region>
     <span class="title" data-tauri-drag-region>AnkiMining</span>
     <span class="status" id="status" data-tauri-drag-region></span>
@@ -103,6 +109,10 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
     const minimizeButton = requireElement(root, '#window-minimize', HTMLButtonElement);
     const maximizeButton = requireElement(root, '#window-maximize', HTMLButtonElement);
     const closeButton = requireElement(root, '#window-close', HTMLButtonElement);
+    const updateBanner = requireElement(root, '#update', HTMLElement);
+    const updateText = requireElement(root, '#update-text', HTMLElement);
+    const updateInstall = requireElement(root, '#update-install', HTMLButtonElement);
+    const updateLater = requireElement(root, '#update-later', HTMLButtonElement);
     const settingsButton = requireElement(root, '#open-settings', HTMLButtonElement);
     const settingsElement = requireElement(root, '#settings', HTMLElement);
     const hoverToggleButton = requireElement(root, '#hover-toggle', HTMLButtonElement);
@@ -265,6 +275,44 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
         windowCommand(backend.closeWindow);
     });
 
+    const showUpdate = (update: UpdateInfo): void => {
+        updateText.textContent = `Version ${update.version} is available (you have ${update.currentVersion}).`;
+        updateInstall.disabled = false;
+        updateInstall.textContent = 'Install and restart';
+        updateBanner.hidden = false;
+    };
+
+    updateInstall.addEventListener('click', () => {
+        updateInstall.disabled = true;
+        updateInstall.textContent = 'Installing\u2026';
+        void backend.installUpdate().catch((error: unknown) => {
+            updateInstall.disabled = false;
+            updateInstall.textContent = 'Install and restart';
+            showMessage(String(error), 'error');
+        });
+    });
+
+    updateLater.addEventListener('click', () => {
+        updateBanner.hidden = true;
+    });
+
+    const checkUpdates = (): void => {
+        showMessage('Looking for a new version\u2026', 'info');
+        void backend
+            .checkUpdate()
+            .then((update) => {
+                if (update === null) {
+                    showMessage('You have the latest version', 'success');
+                    return;
+                }
+                showUpdate(update);
+                showMessage(`Version ${update.version} is available`, 'success');
+            })
+            .catch((error: unknown) => {
+                showMessage(String(error), 'error');
+            });
+    };
+
     const closeSettings = (): void => {
         settingsElement.hidden = true;
         settingsElement.replaceChildren();
@@ -294,6 +342,7 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
                     });
             },
             onCancel: closeSettings,
+            onCheckUpdates: checkUpdates,
             onImportYomitan: (path) => {
                 showMessage('Importing the dictionary...', 'info');
                 void backend
@@ -390,6 +439,7 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
 
     const subscriptions: Unsubscribe[] = await Promise.all([
         backend.onSentence(showSentence),
+        backend.onUpdateAvailable(showUpdate),
         backend.onMineHotkey(() => {
             void mineSelection();
         }),

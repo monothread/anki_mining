@@ -74,6 +74,8 @@ pub struct Config {
     pub tts_on_cards: bool,
     /// The VOICEVOX voice style used for it (see `tts::DEFAULT_STYLE_ID`).
     pub tts_style_id: u32,
+    /// Whether the app looks for a newer version on GitHub a little after it starts.
+    pub auto_update: bool,
     pub default_profile_id: String,
     pub profiles: Vec<Profile>,
 }
@@ -96,6 +98,7 @@ impl Default for Config {
             close_to_tray: false,
             tts_on_cards: true,
             tts_style_id: DEFAULT_STYLE_ID,
+            auto_update: true,
             default_profile_id: DEFAULT_PROFILE_ID.to_string(),
             profiles: vec![default_profile()],
         }
@@ -114,6 +117,7 @@ pub struct MiningSettings {
     pub duplicate_policy: DuplicatePolicy,
     pub close_to_tray: bool,
     pub tts_on_cards: bool,
+    pub auto_update: bool,
 }
 
 impl MiningSettings {
@@ -127,6 +131,7 @@ impl MiningSettings {
             duplicate_policy: config.duplicate_policy,
             close_to_tray: config.close_to_tray,
             tts_on_cards: config.tts_on_cards,
+            auto_update: config.auto_update,
         }
     }
 
@@ -139,6 +144,7 @@ impl MiningSettings {
         config.duplicate_policy = self.duplicate_policy;
         config.close_to_tray = self.close_to_tray;
         config.tts_on_cards = self.tts_on_cards;
+        config.auto_update = self.auto_update;
     }
 }
 
@@ -359,6 +365,7 @@ mod tests {
         assert_eq!(config.duplicate_policy, DuplicatePolicy::Skip);
         assert!(!config.close_to_tray);
         assert!(config.tts_on_cards);
+        assert!(config.auto_update);
         assert_eq!(config.tts_style_id, 8);
         assert_eq!(config.default_profile_id, "default");
         assert_eq!(config.profiles, vec![default_profile()]);
@@ -388,6 +395,7 @@ mod tests {
         assert_eq!(value["duplicatePolicy"], json!("skip"));
         assert_eq!(value["closeToTray"], json!(false));
         assert_eq!(value["ttsOnCards"], json!(true));
+        assert_eq!(value["autoUpdate"], json!(true));
         assert_eq!(value["ttsStyleId"], json!(8));
         assert_eq!(value["defaultProfileId"], json!("default"));
         assert_eq!(value["profiles"][0]["deckName"], json!("Mining"));
@@ -786,6 +794,7 @@ mod tests {
         settings.screenshot_on_cards = false;
         settings.close_to_tray = true;
         settings.tts_on_cards = false;
+        settings.auto_update = false;
 
         settings.clone().apply_to(&mut config);
 
@@ -797,6 +806,8 @@ mod tests {
         assert_eq!(value["screenshotOnCards"], json!(false));
         assert_eq!(value["closeToTray"], json!(true));
         assert_eq!(value["ttsOnCards"], json!(false));
+        assert_eq!(value["autoUpdate"], json!(false));
+        assert!(!config.auto_update);
         assert!(!config.tts_on_cards);
         assert!(config.close_to_tray);
         assert_eq!(value["defaultProfileId"], json!("default"));

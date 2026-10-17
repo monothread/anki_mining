@@ -36,8 +36,20 @@ case "${PLATFORM}" in
 esac
 
 CORE_VERSION="0.17.0"
-DOWNLOADER_URL="https://github.com/VOICEVOX/voicevox_core/releases/download/${CORE_VERSION}/download-linux-x64"
-DOWNLOADER_SHA256="3615f2bba7ff3d4396c02dffb7ce594fde8100dbaf757869bf32d0517d34dc03"
+# The downloader that runs on this machine (it can fetch the files of any system).
+case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+        DOWNLOADER_NAME="download-windows-x64.exe"
+        DOWNLOADER_SHA256="4f0ae2758f3149f084cc91556065009553bf81010f58498c89acb6e2289546b6"
+        ;;
+    *)
+        DOWNLOADER_NAME="download-linux-x64"
+        DOWNLOADER_SHA256="3615f2bba7ff3d4396c02dffb7ce594fde8100dbaf757869bf32d0517d34dc03"
+        ;;
+esac
+DOWNLOADER_URL="https://github.com/VOICEVOX/voicevox_core/releases/download/${CORE_VERSION}/${DOWNLOADER_NAME}"
+# The compiler that makes the Windows helper (mingw-w64); on a Windows machine it is plain gcc.
+MINGW_GCC="${MINGW_GCC:-x86_64-w64-mingw32-gcc}"
 VOICE_MODEL="0.vvm"
 
 if [ "${VOICEVOX_TERMS_ACCEPTED:-}" != "1" ]; then
@@ -52,7 +64,7 @@ fi
 
 mkdir -p "${WORK}" "${TARGET}"
 
-DOWNLOADER="${WORK}/download"
+DOWNLOADER="${WORK}/${DOWNLOADER_NAME}"
 if [ ! -x "${DOWNLOADER}" ] || [ "$(sha256sum "${DOWNLOADER}" | cut -d' ' -f1)" != "${DOWNLOADER_SHA256}" ]; then
     curl --fail --location --silent --show-error --output "${DOWNLOADER}.part" "${DOWNLOADER_URL}"
     if [ "$(sha256sum "${DOWNLOADER}.part" | cut -d' ' -f1)" != "${DOWNLOADER_SHA256}" ]; then
@@ -87,7 +99,7 @@ if [ "${PLATFORM}" = "windows" ]; then
     cp "${CORE}/c_api/lib/voicevox_core.dll" "${TARGET}/"
     cp "${CORE}/onnxruntime/lib/voicevox_onnxruntime.dll" "${TARGET}/"
     # mingw-w64's linker links against the DLL itself.
-    x86_64-w64-mingw32-gcc -O2 -Wall -o "${TARGET}/voicevox_say.exe" "${ROOT}/tools/tts/voicevox_say.c" \
+    "${MINGW_GCC}" -O2 -Wall -o "${TARGET}/voicevox_say.exe" "${ROOT}/tools/tts/voicevox_say.c" \
         -I"${CORE}/c_api/include" -L"${TARGET}" -lvoicevox_core
     test -s "${TARGET}/voicevox_say.exe"
     du -sh "${TARGET}"

@@ -7,6 +7,8 @@ export interface SettingsHandlers {
     onCancel: () => void;
     /** Called with the path of a Yomitan dictionary zip to take pitch accents and frequencies from. */
     onImportYomitan: (path: string) => void;
+    /** Called when "Check now" is clicked. */
+    onCheckUpdates: () => void;
 }
 
 export const MIN_AUDIO_SECONDS = 1;
@@ -167,6 +169,7 @@ export function readSettings(root: HTMLElement): MiningSettings {
         duplicatePolicy: select('duplicatePolicy').value === 'allow' ? 'allow' : 'skip',
         closeToTray: input(root, 'closeToTray').checked,
         ttsOnCards: input(root, 'ttsOnCards').checked,
+        autoUpdate: input(root, 'autoUpdate').checked,
     };
 }
 
@@ -247,6 +250,14 @@ export function renderSettings(root: HTMLElement, settings: MiningSettings, hand
         element('legend', undefined, 'Application'),
         labelled('Keep running in the system tray when the window is closed', checkbox('closeToTray', settings.closeToTray)),
     );
+    const updates = element('div', 'check-updates');
+    const checkButton = element('button', 'action check-now', 'Check now');
+    checkButton.type = 'button';
+    checkButton.addEventListener('click', () => {
+        handlers.onCheckUpdates();
+    });
+    updates.append(checkbox('autoUpdate', settings.autoUpdate), checkButton);
+    application.append(labelled('Look for a new version when the app starts', updates));
     root.append(application);
 
     const removable = settings.profiles.length > 1;

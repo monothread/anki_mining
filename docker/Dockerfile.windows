@@ -62,4 +62,14 @@ RUN dpkg --add-architecture i386 \
     && rm -rf /var/lib/apt/lists/*
 ENV PATH=/opt/wine-stable/bin:$PATH
 
+# The Tauri CLI looks for a tray library on the machine it runs on, even when it builds the
+# Windows installer.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libayatana-appindicator3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ubuntu 22.04 has NSIS 3.08; the installer Tauri makes includes a file that came with 3.09.
+RUN curl -fsSL -o /usr/share/nsis/Include/Win/RestartManager.nsh \
+        https://raw.githubusercontent.com/kichik/nsis/f0bfe3e0062c57dc1ef90f1d235c7c0bd5a43be4/Include/Win/RestartManager.nsh
+
 WORKDIR /workspace

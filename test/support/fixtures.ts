@@ -115,4 +115,5 @@ export const SETTINGS: MiningSettings = {
     duplicatePolicy: 'skip',
     closeToTray: false,
     ttsOnCards: true,
+    autoUpdate: true,
 };

@@ -15,8 +15,9 @@ function mount(settings: MiningSettings = SETTINGS) {
     const onSave = vi.fn<(changed: MiningSettings) => void>();
     const onCancel = vi.fn<() => void>();
     const onImportYomitan = vi.fn<(path: string) => void>();
-    renderSettings(root, settings, { onSave, onCancel, onImportYomitan });
-    return { root, onSave, onCancel, onImportYomitan };
+    const onCheckUpdates = vi.fn<() => void>();
+    renderSettings(root, settings, { onSave, onCancel, onImportYomitan, onCheckUpdates });
+    return { root, onSave, onCancel, onImportYomitan, onCheckUpdates };
 }
 
 function field(root: ParentNode, name: string): HTMLInputElement {
@@ -67,6 +68,7 @@ describe('renderSettings', () => {
         expect(field(root, 'audioSeconds').value).toBe('8');
         expect(field(root, 'closeToTray').checked).toBe(false);
         expect(field(root, 'ttsOnCards').checked).toBe(true);
+        expect(field(root, 'autoUpdate').checked).toBe(true);
         expect(root.querySelector('.general input[name="closeToTray"]')).toBeNull();
         expect(root.querySelector('.application input[name="closeToTray"]')).not.toBeNull();
         expect(root.querySelector<HTMLSelectElement>('select[name="duplicatePolicy"]')?.value).toBe('skip');
@@ -105,6 +107,7 @@ describe('renderSettings', () => {
         field(root, 'screenshotOnCards').checked = false;
         field(root, 'closeToTray').checked = true;
         field(root, 'ttsOnCards').checked = false;
+        field(root, 'autoUpdate').checked = false;
         const policy = root.querySelector<HTMLSelectElement>('select[name="duplicatePolicy"]');
         if (policy) {
             policy.value = 'allow';
@@ -132,6 +135,7 @@ describe('renderSettings', () => {
             duplicatePolicy: 'allow',
             closeToTray: true,
             ttsOnCards: false,
+            autoUpdate: false,
         });
     });
 
@@ -214,6 +218,16 @@ describe('Yomitan import', () => {
         click(root, '.import-yomitan');
 
         expect(onImportYomitan).not.toHaveBeenCalled();
+    });
+});
+
+describe('Check for updates', () => {
+    it('asks to look for a new version when Check now is clicked', () => {
+        const { root, onCheckUpdates } = mount();
+
+        click(root, '.check-now');
+
+        expect(onCheckUpdates).toHaveBeenCalledTimes(1);
     });
 });
 

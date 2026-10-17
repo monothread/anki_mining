@@ -27,6 +27,8 @@ export interface Config {
     ttsOnCards: boolean;
     /** The VOICEVOX voice style used for it. */
     ttsStyleId: number;
+    /** Whether the app looks for a newer version a little after it starts. */
+    autoUpdate: boolean;
     defaultProfileId: string;
     profiles: Profile[];
 }

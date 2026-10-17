@@ -7,6 +7,9 @@
 # `all` fetches both:  scripts/fetch-ocr-models.sh [linux|windows|all]
 set -euo pipefail
 
+# `python3` on Linux; Windows has `python`.
+PYTHON="$(command -v python3 || command -v python)"
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${ROOT}/src-tauri/resources/ocr"
 
@@ -92,7 +95,7 @@ fetch_windows_library() {
     local workdir
     workdir="$(mktemp -d)"
     fetch_verified "${ORT_WINDOWS_ARCHIVE_URL}" "${workdir}/ort.zip" "${ORT_WINDOWS_ARCHIVE_SHA256}"
-    python3 - "${workdir}/ort.zip" "onnxruntime-win-x64-${ORT_VERSION}/lib/${ORT_WINDOWS_LIBRARY}" "${TARGET}/${ORT_WINDOWS_LIBRARY}.part" <<'PYTHON'
+    "${PYTHON}" - "${workdir}/ort.zip" "onnxruntime-win-x64-${ORT_VERSION}/lib/${ORT_WINDOWS_LIBRARY}" "${TARGET}/${ORT_WINDOWS_LIBRARY}.part" <<'PYTHON'
 import shutil, sys, zipfile
 archive, member, destination = sys.argv[1:4]
 with zipfile.ZipFile(archive) as zipped, zipped.open(member) as source, open(destination, "wb") as target:

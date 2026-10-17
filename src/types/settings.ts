@@ -15,4 +15,6 @@ export interface MiningSettings {
     closeToTray: boolean;
     /** Whether cards get the word and the sentence read by a synthesized voice. */
     ttsOnCards: boolean;
+    /** Whether the app looks for a newer version a little after it starts. */
+    autoUpdate: boolean;
 }

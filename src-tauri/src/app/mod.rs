@@ -5,6 +5,7 @@ pub mod pipeline;
 pub mod selftest;
 pub mod state;
 mod tray;
+mod updater;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
@@ -213,6 +214,16 @@ async fn known_words(app: AppHandle, words: Vec<String>) -> Result<Vec<bool>, St
 }
 
 #[tauri::command]
+async fn check_update(app: AppHandle) -> Result<Option<updater::UpdateInfo>, String> {
+    updater::check(&app).await
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    updater::install(&app).await
+}
+
+#[tauri::command]
 async fn speak_text(app: AppHandle, text: String) -> Result<(), String> {
     off_main_thread(move || app.state::<AppState>().speak_aloud(&text))
         .await
@@ -395,6 +406,7 @@ pub fn run() -> tauri::Result<()> {
         std::process::exit(code);
     }
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -418,6 +430,8 @@ pub fn run() -> tauri::Result<()> {
             get_hover,
             mine_hover,
             speak_text,
+            check_update,
+            install_update,
             known_words,
             set_hover_mode,
             set_hover_enabled,
@@ -461,6 +475,7 @@ pub fn run() -> tauri::Result<()> {
 
 fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(HoverMemory::default());
+    app.manage(updater::PendingUpdate::default());
     let mut warnings = Vec::new();
     let config_dir = app.path().app_config_dir()?;
     let data_dir = app.path().app_data_dir()?;
@@ -516,6 +531,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let close_to_tray = config.close_to_tray;
+    let auto_update = config.auto_update;
     let speaker = start_speaker(app, &config, &mut warnings);
     let mut state = AppState::new(
         config,
@@ -536,6 +552,9 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(state);
     start_hover(app, &hover_control, &tokenizer);
     tray::sync_tray_on_main_thread(app, close_to_tray);
+    if auto_update {
+        updater::check_in_background(app);
+    }
     Ok(())
 }
 
