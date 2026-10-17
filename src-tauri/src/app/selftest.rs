@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::capture::{Region, ScreenCapture, SystemCapture};
 use crate::dictionary::{install_bundled, Dictionary};
+use crate::ocr::meiki::{DETECTION_MODEL, RECOGNITION_MODEL, RUNTIME_LIBRARY};
 use crate::ocr::{lines_to_text, MeikiEngine, OcrEngine};
 use crate::pointer::{PointerTracker, SystemPointer};
 use crate::tokenizer::Tokenizer;
@@ -167,8 +168,15 @@ fn check_tokenizer() -> Check {
 }
 
 fn check_ocr(resources: &Path) -> Check {
-    let mut engine =
-        MeikiEngine::from_directory(&resources.join("ocr")).map_err(|error| error.to_string())?;
+    let directory = resources.join("ocr");
+    // Asked first: trying to load a library that is not there leaves the ONNX Runtime of the
+    // process in a state that cannot be repaired, and the message would not say what is missing.
+    for file in [RUNTIME_LIBRARY, DETECTION_MODEL, RECOGNITION_MODEL] {
+        if !directory.join(file).is_file() {
+            return Err(format!("{} is missing", directory.join(file).display()));
+        }
+    }
+    let mut engine = MeikiEngine::from_directory(&directory).map_err(|error| error.to_string())?;
     let image = image::load_from_memory(SUBTITLE_IMAGE)
         .map_err(|error| error.to_string())?
         .to_rgb8();
@@ -306,7 +314,10 @@ mod tests {
         let ocr = check_ocr(directory.path()).expect_err("no models");
 
         assert!(dictionary.contains("jmdict.db is missing"), "{dictionary}");
-        assert!(!ocr.is_empty());
+        assert!(
+            ocr.contains(RUNTIME_LIBRARY) && ocr.contains("is missing"),
+            "{ocr}"
+        );
     }
 
     #[test]
