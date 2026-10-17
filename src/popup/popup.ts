@@ -1,5 +1,6 @@
 import type { PopupBackend } from '../ipc/popup';
 import type { MineResult } from '../types/mine';
+import { markKnown } from '../ui/known';
 import { renderHoverResult } from './view';
 
 const TEMPLATE = `
@@ -21,8 +22,11 @@ export async function createPopup(root: HTMLElement, backend: PopupBackend): Pro
         message.dataset['kind'] = result.success ? 'success' : 'error';
     };
 
+    let shownSentence: string | null = null;
+
     const unsubscribes = await Promise.all([
         backend.onHoverResult((result) => {
+            shownSentence = result.sentence;
             message.textContent = '';
             delete message.dataset['kind'];
             renderHoverResult(body, result, {
@@ -42,6 +46,11 @@ export async function createPopup(root: HTMLElement, backend: PopupBackend): Pro
             });
         }),
         backend.onMineResult(showMessage),
+        backend.onKnownWords((known) => {
+            if (known.sentence === shownSentence) {
+                markKnown(body, '.popup-token', known.words);
+            }
+        }),
     ]);
 
     return () => {

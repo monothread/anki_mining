@@ -19,6 +19,14 @@ computer's audio output with `parec`, which comes with PulseAudio and PipeWire).
 `screenshotOnCards: false` or `audioOnCards: false` in `config.json`; `audioSeconds` sets the longest clip. Duplicates are
 refused. The popup tells you what happened.
 
+## Words you already have
+
+Every word of a sentence (in the popup and in the main window) is underlined: a solid green line means the word
+already has a card in the deck cards go to, a dashed grey line means it does not. The app asks Anki once per
+sentence (one AnkiConnect request for all the words) and compares the dictionary form of each word with the
+`Expression` field of your cards, so `食べた` counts as `食べる`. It looks in the deck of the profile a card made
+now would go to. With Anki closed nothing is underlined.
+
 ## Spoken word and sentence
 
 Every card gets a spoken example from a natural-sounding neural Japanese voice that runs offline inside the app

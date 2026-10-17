@@ -31,6 +31,8 @@ export interface Backend {
     importDictionary: (path: string) => Promise<ImportStats>;
     /** Adds the pitch accents and frequencies of a Yomitan dictionary zip. */
     importYomitan: (path: string) => Promise<MetadataStats>;
+    /** For each word, whether a card of it is already in the deck (rejects when Anki cannot be reached). */
+    knownWords: (words: string[]) => Promise<boolean[]>;
     /** Reads a text aloud with the synthesized voice. */
     speak: (text: string) => Promise<void>;
     submitText: (text: string) => Promise<void>;
@@ -87,6 +89,9 @@ export const tauriBackend: Backend = {
     },
     importYomitan: async (path) => {
         return invoke<MetadataStats>('import_yomitan', { path });
+    },
+    knownWords: async (words) => {
+        return invoke<boolean[]>('known_words', { words });
     },
     speak: async (text) => {
         await invoke('speak_text', { text });

@@ -131,6 +131,26 @@ impl AnkiClient {
         Ok(())
     }
 
+    /// For each search query, whether any note matches it (one request for all of them).
+    pub fn notes_exist(&self, queries: &[String]) -> Result<Vec<bool>, AnkiError> {
+        if queries.is_empty() {
+            return Ok(Vec::new());
+        }
+        let actions: Vec<Value> = queries
+            .iter()
+            .map(|query| json!({ "action": "findNotes", "params": { "query": query } }))
+            .collect();
+        let answers: Vec<Value> = self.call("multi", json!({ "actions": actions }))?;
+        if answers.len() != queries.len() {
+            return Err(AnkiError::InvalidResponse(format!(
+                "multi: {} answers for {} queries",
+                answers.len(),
+                queries.len()
+            )));
+        }
+        Ok(answers.iter().map(found_any).collect())
+    }
+
     /// Stores base64 `data` in Anki's media folder and returns the name it was stored under.
     pub fn store_media_file(&self, filename: &str, data: &str) -> Result<String, AnkiError> {
         self.call(
@@ -235,6 +255,44 @@ fn classify_api_error(message: String) -> AnkiError {
         AnkiError::Duplicate
     } else {
         AnkiError::Api(message)
+    }
+}
+
+/// Escapes the characters that have a meaning in an Anki search inside a quoted text.
+fn escape_search(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        if matches!(character, '\\' | '"' | '*' | '_' | ':') {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
+/// The Anki search for the notes of `deck` whose `field` is exactly `word`.
+pub fn known_word_query(deck: &str, field: &str, word: &str) -> String {
+    format!(
+        "\"deck:{}\" \"{}:{}\"",
+        escape_search(deck),
+        escape_search(field),
+        escape_search(word)
+    )
+}
+
+/// Whether one answer of `multi` to `findNotes` lists a note: the answer is the list of ids, or an
+/// object `{ result, error }` holding it; an error counts as no note.
+fn found_any(answer: &Value) -> bool {
+    match answer {
+        Value::Array(ids) => !ids.is_empty(),
+        Value::Object(map) => {
+            map.get("error").is_none_or(Value::is_null)
+                && map
+                    .get("result")
+                    .and_then(Value::as_array)
+                    .is_some_and(|ids| !ids.is_empty())
+        }
+        _ => false,
     }
 }
 
@@ -685,5 +743,86 @@ mod tests {
             error,
             AnkiError::Api("model was not found: AnkiMining".to_string())
         );
+    }
+
+    #[test]
+    fn notes_exist_sends_one_find_per_query_in_a_single_request() {
+        let mock = MockAnki::start(vec![ok(
+            json!([[11], [], { "result": [5], "error": null }]),
+        )]);
+
+        let found = client(&mock)
+            .notes_exist(&["a".to_string(), "b".to_string(), "c".to_string()])
+            .expect("found");
+
+        assert_eq!(found, vec![true, false, true]);
+        assert_eq!(
+            mock.requests(),
+            vec![json!({
+                "action": "multi",
+                "version": 6,
+                "params": { "actions": [
+                    { "action": "findNotes", "params": { "query": "a" } },
+                    { "action": "findNotes", "params": { "query": "b" } },
+                    { "action": "findNotes", "params": { "query": "c" } }
+                ] }
+            })]
+        );
+    }
+
+    #[test]
+    fn notes_exist_with_no_queries_does_not_call_anki() {
+        let mock = MockAnki::start(vec![]);
+
+        assert_eq!(
+            client(&mock).notes_exist(&[]).expect("empty"),
+            Vec::<bool>::new()
+        );
+        assert!(mock.requests().is_empty());
+    }
+
+    #[test]
+    fn a_failed_query_counts_as_no_note_and_a_wrong_count_is_an_error() {
+        let mock = MockAnki::start(vec![
+            ok(json!([{ "result": null, "error": "bad query" }, 7, [1]])),
+            ok(json!([[1]])),
+        ]);
+        let queries = ["x".to_string(), "y".to_string(), "z".to_string()];
+
+        assert_eq!(
+            client(&mock).notes_exist(&queries).expect("found"),
+            vec![false, false, true]
+        );
+        let error = client(&mock).notes_exist(&queries).expect_err("count");
+        assert_eq!(
+            error,
+            AnkiError::InvalidResponse("multi: 1 answers for 3 queries".to_string())
+        );
+    }
+
+    #[test]
+    fn notes_exist_reports_a_closed_anki_as_a_connection_error() {
+        let result = AnkiClient::new("http://127.0.0.1:1")
+            .with_retries(0)
+            .notes_exist(&["a".to_string()]);
+
+        assert!(matches!(result, Err(AnkiError::Connection { .. })));
+    }
+
+    #[test]
+    fn the_known_word_query_searches_the_deck_and_the_exact_field() {
+        assert_eq!(
+            known_word_query("Mining", "Expression", "猫"),
+            "\"deck:Mining\" \"Expression:猫\""
+        );
+    }
+
+    #[test]
+    fn characters_with_a_meaning_in_a_search_are_escaped() {
+        assert_eq!(
+            known_word_query("Anime: \"A_B\"", "My*Field", "a\\b*c_d:e\"f"),
+            "\"deck:Anime\\: \\\"A\\_B\\\"\" \"My\\*Field:a\\\\b\\*c\\_d\\:e\\\"f\""
+        );
+        assert_eq!(escape_search("日本語"), "日本語");
     }
 }

@@ -6,9 +6,10 @@ import type { DeinflectedEntry, ScanResult } from '../types/scan';
 import type { Sentence } from '../types/sentence';
 import type { Status } from '../types/status';
 import type { Token } from '../types/token';
+import { markKnown } from './known';
 import { renderLookup } from './lookupView';
 import { renderSettings } from './settingsView';
-import { markSelected, renderSentence } from './sentenceView';
+import { isWordToken, markSelected, renderSentence } from './sentenceView';
 
 /** Label of the button that switches how lookups start (the other mode is what a click gives). */
 export function describeHoverMode(hover: HoverStatus): string {
@@ -198,6 +199,32 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
                 void selectToken(sentence, token);
             },
         });
+        const shown = requestCounter;
+        const words = sentence.tokens.filter(isWordToken);
+        if (words.length > 0) {
+            // Anki being closed is normal: the words are then simply not underlined.
+            void backend
+                .knownWords(
+                    words.map((token) => {
+                        return token.lemma;
+                    }),
+                )
+                .then((known) => {
+                    if (shown !== requestCounter) {
+                        return;
+                    }
+                    markKnown(
+                        sentenceElement,
+                        '.token',
+                        words.map((token, index) => {
+                            return { start: token.start, known: known[index] === true };
+                        }),
+                    );
+                })
+                .catch(() => {
+                    return undefined;
+                });
+        }
     };
 
     const mineSelection = async (): Promise<void> => {

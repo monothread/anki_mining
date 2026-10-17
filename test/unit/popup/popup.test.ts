@@ -3,6 +3,7 @@ import type { PopupBackend } from '../../../src/ipc/popup';
 import { createPopup } from '../../../src/popup/popup';
 import type { HoverResult } from '../../../src/types/hover';
 import type { MineResult } from '../../../src/types/mine';
+import type { KnownWords } from '../../../src/ui/known';
 import { HOVER_RESULT } from '../../support/fixtures';
 
 interface Mounted {
@@ -11,6 +12,7 @@ interface Mounted {
     speak: ReturnType<typeof vi.fn<PopupBackend['speak']>>;
     emitHoverResult: (result: HoverResult) => void;
     emitMineResult: (result: MineResult) => void;
+    emitKnown: (known: KnownWords) => void;
     unsubscribes: ReturnType<typeof vi.fn<() => void>>[];
     dispose: () => void;
 }
@@ -24,7 +26,10 @@ async function mount(): Promise<Mounted> {
     let mineHandler: (result: MineResult) => void = () => {
         return undefined;
     };
-    const unsubscribes = [vi.fn<() => void>(), vi.fn<() => void>()];
+    let knownHandler: (known: KnownWords) => void = () => {
+        return undefined;
+    };
+    const unsubscribes = [vi.fn<() => void>(), vi.fn<() => void>(), vi.fn<() => void>()];
     const mine = vi
         .fn<PopupBackend['mine']>()
         .mockResolvedValue({ success: true, message: 'Added 友達 (note 1)' });
@@ -40,6 +45,10 @@ async function mount(): Promise<Mounted> {
             mineHandler = handler;
             return Promise.resolve(unsubscribes[1] ?? vi.fn<() => void>());
         },
+        onKnownWords: (handler) => {
+            knownHandler = handler;
+            return Promise.resolve(unsubscribes[2] ?? vi.fn<() => void>());
+        },
     };
     const dispose = await createPopup(root, backend);
     return {
@@ -51,6 +60,9 @@ async function mount(): Promise<Mounted> {
         },
         emitMineResult: (result) => {
             mineHandler(result);
+        },
+        emitKnown: (known) => {
+            knownHandler(known);
         },
         unsubscribes,
         dispose,
@@ -170,6 +182,50 @@ describe('createPopup', () => {
         });
 
         expect(message(root).dataset['kind']).toBe('error');
+    });
+
+    it('underlines the words that are in Anki and the ones that are not', async () => {
+        const { root, emitHoverResult, emitKnown } = await mount();
+        emitHoverResult(HOVER_RESULT);
+
+        emitKnown({
+            sentence: HOVER_RESULT.sentence,
+            words: [
+                { start: 0, known: false },
+                { start: 3, known: true },
+                { start: 6, known: false },
+            ],
+        });
+
+        const classes = [...root.querySelectorAll('.popup-token')].map((token) => {
+            return [token.textContent, token.className];
+        });
+        expect(classes).toEqual([
+            ['昨日', 'popup-token unknown'],
+            ['友達', 'popup-token known'],
+            ['と', 'popup-token'],
+            ['映画', 'popup-token unknown'],
+        ]);
+    });
+
+    it('ignores an answer about another sentence', async () => {
+        const { root, emitHoverResult, emitKnown } = await mount();
+        emitHoverResult(HOVER_RESULT);
+
+        emitKnown({ sentence: '別の文', words: [{ start: 3, known: true }] });
+
+        expect(root.querySelector('.known')).toBeNull();
+    });
+
+    it('shows a new sentence without the underlines of the old one', async () => {
+        const { root, emitHoverResult, emitKnown } = await mount();
+        emitHoverResult(HOVER_RESULT);
+        emitKnown({ sentence: HOVER_RESULT.sentence, words: [{ start: 3, known: true }] });
+
+        emitHoverResult({ ...HOVER_RESULT, sentence: '犬が好き', wordStart: 0, tokens: [] });
+
+        expect(root.querySelector('.known')).toBeNull();
+        expect(root.querySelector('.popup-sentence')?.textContent).toBe('犬が好き');
     });
 });
 

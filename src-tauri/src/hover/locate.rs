@@ -123,12 +123,17 @@ fn axis_distance(start: i32, end: i32, value: i32) -> i32 {
     }
 }
 
+/// Whether the token is a word (not punctuation, a symbol or a space).
+pub fn is_word(token: &Token) -> bool {
+    !NON_WORD_POS.contains(&token.pos.as_str())
+}
+
 /// The word token that contains the UTF-16 `offset`; punctuation and symbols do not count.
 pub fn word_at(tokens: &[Token], offset: usize) -> Option<&Token> {
     tokens
         .iter()
         .find(|token| token.start <= offset && offset < token.end)
-        .filter(|token| !NON_WORD_POS.contains(&token.pos.as_str()))
+        .filter(|token| is_word(token))
 }
 
 #[cfg(test)]
@@ -469,6 +474,15 @@ mod tests {
             vertical: false,
         };
         assert_eq!(character_at(&[empty], (10, 10)), None);
+    }
+
+    #[test]
+    fn only_words_are_words() {
+        assert!(is_word(&token("猫", "名詞", 0, 1)));
+        assert!(is_word(&token("が", "助詞", 1, 2)));
+        assert!(!is_word(&token("。", "補助記号", 2, 3)));
+        assert!(!is_word(&token("★", "記号", 3, 4)));
+        assert!(!is_word(&token(" ", "空白", 4, 5)));
     }
 
     #[test]

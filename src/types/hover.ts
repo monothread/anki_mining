@@ -1,4 +1,5 @@
 import type { ScanResult } from './scan';
+import type { Token } from './token';
 
 export type TriggerMode = 'hold' | 'auto';
 export type TriggerKey = 'shift' | 'control' | 'alt';
@@ -23,4 +24,6 @@ export interface HoverResult {
     lineBbox: [number, number, number, number];
     /** Whether the text is a vertical column (the popup goes beside it). */
     vertical: boolean;
+    /** The words of `sentence`, so the popup can underline the ones that are in Anki. */
+    tokens: Token[];
 }

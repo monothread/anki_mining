@@ -17,7 +17,9 @@ use crate::cards::CardInput;
 use crate::dictionary::ScanResult;
 use crate::ocr::{OcrEngine, OcrError};
 use crate::tokenizer::{Tokenizer, TokenizerError};
+use crate::types::token::Token;
 
+pub use self::locate::is_word;
 use self::locate::{character_at, word_at};
 
 #[derive(Debug, Error)]
@@ -146,6 +148,8 @@ pub struct HoverResult {
     pub line_bbox: [i32; 4],
     /// Whether the text is a vertical column (the popup then goes beside it, not under it).
     pub vertical: bool,
+    /// The words of `sentence` (UTF-16 offsets), so the popup can mark which ones are in Anki.
+    pub tokens: Vec<Token>,
 }
 
 /// What a lookup found at the cursor; the reasons for finding nothing are told to the user.
@@ -249,6 +253,7 @@ pub fn lookup_in(
         char_bbox: hit.char_bbox,
         line_bbox: hit.line_bbox,
         vertical: hit.vertical,
+        tokens,
     }))
 }
 
@@ -588,6 +593,14 @@ mod tests {
     #[test]
     fn a_result_serializes_with_camel_case_keys() {
         let result = HoverResult {
+            tokens: vec![Token {
+                surface: "猫".to_string(),
+                lemma: "猫".to_string(),
+                reading: "ネコ".to_string(),
+                pos: "名詞".to_string(),
+                start: 0,
+                end: 1,
+            }],
             sentence: "猫".to_string(),
             word_start: 0,
             results: vec![],
@@ -604,6 +617,7 @@ mod tests {
                 "results": [],
                 "charBbox": [1, 2, 3, 4],
                 "lineBbox": [0, 2, 10, 4],
+                "tokens": [{ "surface": "猫", "lemma": "猫", "reading": "ネコ", "pos": "名詞", "start": 0, "end": 1 }],
                 "vertical": false
             })
         );
@@ -629,6 +643,7 @@ mod tests {
     #[test]
     fn explanations_tell_the_user_why_nothing_was_shown() {
         let empty_entry = LookupOutcome::Found(HoverResult {
+            tokens: Vec::new(),
             sentence: "私は猫が好き".to_string(),
             word_start: 2,
             results: vec![],
@@ -664,6 +679,7 @@ mod tests {
     #[test]
     fn a_word_with_entries_needs_no_explanation() {
         let found_word = LookupOutcome::Found(HoverResult {
+            tokens: Vec::new(),
             sentence: "猫".to_string(),
             word_start: 0,
             results: vec![crate::dictionary::ScanResult {
@@ -804,6 +820,7 @@ mod tests {
             reasons: vec![],
         };
         HoverResult {
+            tokens: Vec::new(),
             sentence: "昨日、友達と映画".to_string(),
             word_start: 3,
             results: vec![
@@ -847,6 +864,7 @@ mod tests {
         assert_eq!(card_input(&result, 2, 0), None);
         assert_eq!(card_input(&result, 0, 2), None);
         let empty = HoverResult {
+            tokens: Vec::new(),
             results: vec![],
             ..result
         };
@@ -862,6 +880,7 @@ mod tests {
         assert_eq!(memory.get(), Some(two_entry_result()));
 
         let other = HoverResult {
+            tokens: Vec::new(),
             sentence: "別".to_string(),
             ..two_entry_result()
         };

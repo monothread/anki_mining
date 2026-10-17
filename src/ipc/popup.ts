@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { HoverResult } from '../types/hover';
 import type { MineResult } from '../types/mine';
+import type { KnownWords } from '../ui/known';
 
 /** What the hover popup window needs from the backend. */
 export interface PopupBackend {
@@ -11,6 +12,8 @@ export interface PopupBackend {
     speak: (text: string) => Promise<void>;
     onHoverResult: (handler: (result: HoverResult) => void) => Promise<() => void>;
     onMineResult: (handler: (result: MineResult) => void) => Promise<() => void>;
+    /** Which words of the sentence already have a card (arrives a moment after the sentence). */
+    onKnownWords: (handler: (known: KnownWords) => void) => Promise<() => void>;
 }
 
 export const tauriPopupBackend: PopupBackend = {
@@ -27,6 +30,11 @@ export const tauriPopupBackend: PopupBackend = {
     },
     onMineResult: async (handler) => {
         return listen<MineResult>('mine-result', (message) => {
+            handler(message.payload);
+        });
+    },
+    onKnownWords: async (handler) => {
+        return listen<KnownWords>('hover-known', (message) => {
             handler(message.payload);
         });
     },

@@ -15,13 +15,14 @@ use crate::capture::{Region, ScreenCapture, X11Capture};
 use crate::config::{Config, ConfigFile};
 use crate::hover::placement::{popup_position, popup_position_beside, Rect};
 use crate::hover::trigger::{PointerSample, Trigger, TriggerKey, TriggerMode};
-use crate::hover::{lookup_in, HoverMemory, LookupOutcome};
+use crate::hover::{is_word, lookup_in, HoverMemory, LookupOutcome};
 use crate::media::crop_to_region;
 use crate::ocr::{MeikiEngine, OcrEngine};
 use crate::pointer::WindowIdentity;
 use crate::pointer::{PointerTracker, X11Pointer};
 use crate::sources::now_millis;
 use crate::tokenizer::Tokenizer;
+use crate::types::token::Token;
 use image::RgbImage;
 
 use super::state::AppState;
@@ -31,6 +32,7 @@ const POPUP_PAGE: &str = "popup.html";
 const RESULT_EVENT: &str = "hover-result";
 const ERROR_EVENT: &str = "app-error";
 const INFO_EVENT: &str = "hover-info";
+const KNOWN_EVENT: &str = "hover-known";
 const POPUP_WIDTH: i32 = 460;
 const POPUP_HEIGHT: i32 = 340;
 const POLL_INTERVAL: Duration = Duration::from_millis(30);
@@ -371,6 +373,64 @@ fn is_over_app_window(app: &AppHandle, cursor: (i32, i32)) -> bool {
     })
 }
 
+/// Which words of the sentence of the popup already have a card in Anki.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnownWords {
+    pub sentence: String,
+    pub words: Vec<KnownWord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnownWord {
+    /// Where the word starts in the sentence (UTF-16 code units).
+    pub start: usize,
+    pub known: bool,
+}
+
+/// The words of `tokens` that are worth checking and the dictionary form of each.
+pub fn known_candidates(tokens: &[Token]) -> Vec<(usize, String)> {
+    tokens
+        .iter()
+        .filter(|token| is_word(token))
+        .map(|token| (token.start, token.lemma.clone()))
+        .collect()
+}
+
+/// Asks Anki which words of the popup's sentence it already has and tells the popup, without
+/// making the popup wait for it.
+fn check_known_words(
+    app: &AppHandle,
+    result: &crate::hover::HoverResult,
+    identity: WindowIdentity,
+) {
+    let candidates = known_candidates(&result.tokens);
+    if candidates.is_empty() {
+        return;
+    }
+    let app = app.clone();
+    let sentence = result.sentence.clone();
+    thread::spawn(move || {
+        let Some(state) = app.try_state::<AppState>() else {
+            return;
+        };
+        let lemmas: Vec<String> = candidates.iter().map(|(_, lemma)| lemma.clone()).collect();
+        let Ok(known) = state.known_words(&lemmas, Some(&identity)) else {
+            return;
+        };
+        let words = candidates
+            .iter()
+            .zip(known)
+            .map(|((start, _), known)| KnownWord {
+                start: *start,
+                known,
+            })
+            .collect();
+        let _ = app.emit_to(POPUP_LABEL, KNOWN_EVENT, KnownWords { sentence, words });
+    });
+}
+
 fn show_popup(
     app: &AppHandle,
     popup: Rect,
@@ -385,9 +445,10 @@ fn show_popup(
     let _ = window.set_position(PhysicalPosition::new(popup.x, popup.y));
     let _ = app.emit_to(POPUP_LABEL, RESULT_EVENT, result);
     if let Some(memory) = app.try_state::<HoverMemory>() {
-        memory.set_with_origin(result.clone(), screenshot, identity);
+        memory.set_with_origin(result.clone(), screenshot, identity.clone());
     }
     let _ = window.show();
+    check_known_words(app, result, identity);
 }
 
 fn hide_popup(app: &AppHandle) {
@@ -656,5 +717,57 @@ mod tests {
         };
 
         assert!(!HoverControl::new(&config).is_enabled());
+    }
+
+    fn token(surface: &str, lemma: &str, pos: &str, start: usize, end: usize) -> Token {
+        Token {
+            surface: surface.to_string(),
+            lemma: lemma.to_string(),
+            reading: String::new(),
+            pos: pos.to_string(),
+            start,
+            end,
+        }
+    }
+
+    #[test]
+    fn only_words_are_checked_in_anki_with_their_dictionary_form() {
+        let tokens = [
+            token("食べた", "食べる", "動詞", 0, 3),
+            token("、", "、", "補助記号", 3, 4),
+            token("猫", "猫", "名詞", 4, 5),
+            token(" ", " ", "空白", 5, 6),
+        ];
+
+        assert_eq!(
+            known_candidates(&tokens),
+            vec![(0, "食べる".to_string()), (4, "猫".to_string())]
+        );
+        assert_eq!(known_candidates(&[]), Vec::new());
+    }
+
+    #[test]
+    fn the_known_words_event_serializes_with_camel_case_keys() {
+        let event = KnownWords {
+            sentence: "猫が好き".to_string(),
+            words: vec![
+                KnownWord {
+                    start: 0,
+                    known: true,
+                },
+                KnownWord {
+                    start: 1,
+                    known: false,
+                },
+            ],
+        };
+
+        assert_eq!(
+            serde_json::to_value(event).expect("json"),
+            serde_json::json!({
+                "sentence": "猫が好き",
+                "words": [{ "start": 0, "known": true }, { "start": 1, "known": false }]
+            })
+        );
     }
 }

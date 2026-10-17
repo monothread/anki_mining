@@ -98,4 +98,40 @@ describe('renderHoverResult', () => {
         expect(onMine).toHaveBeenNthCalledWith(1, 1, 1);
         expect(onMine).toHaveBeenNthCalledWith(2, 0, 0);
     });
+
+    it('makes every word of the sentence an element that can be underlined, and not the punctuation', () => {
+        const root = render();
+
+        const words = [...root.querySelectorAll<HTMLElement>('.popup-token')].map((token) => {
+            return [token.textContent, token.dataset['start']];
+        });
+        expect(words).toEqual([
+            ['昨日', '0'],
+            ['友達', '3'],
+            ['と', '5'],
+            ['映画', '6'],
+        ]);
+        expect(root.querySelector('.popup-word .popup-token')?.textContent).toBe('友達');
+    });
+
+    it('cuts a word where the marked match ends inside it', () => {
+        const root = render({
+            ...HOVER_RESULT,
+            sentence: '日本語',
+            wordStart: 0,
+            results: [{ ...(HOVER_RESULT.results[0] as (typeof HOVER_RESULT.results)[number]), length: 2 }],
+            tokens: [{ surface: '日本語', lemma: '日本語', reading: 'ニホンゴ', pos: '名詞', start: 0, end: 3 }],
+        });
+
+        expect(root.querySelector('.popup-sentence')?.textContent).toBe('日本語');
+        expect(root.querySelector('.popup-word')?.textContent).toBe('日本');
+        const pieces = [...root.querySelectorAll<HTMLElement>('.popup-token')].map((token) => {
+            return [token.textContent, token.dataset['start']];
+        });
+        expect(pieces).toEqual([
+            ['日本', '0'],
+            ['語', '0'],
+        ]);
+    });
 });
+

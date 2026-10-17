@@ -875,5 +875,62 @@ describe('createApp window controls', () => {
             expect(text(root, '#message')).toBe('no program to play sound was found');
         });
     });
+
+    it('asks Anki about the dictionary form of every word of the sentence and underlines the answer', async () => {
+        const { root, fake } = await mount((created) => {
+            vi.mocked(created.backend.knownWords).mockResolvedValue([true, false, true]);
+        });
+
+        fake.emitSentence(SENTENCE);
+        await vi.waitFor(() => {
+            expect(root.querySelector('.token.known')).not.toBeNull();
+        });
+
+        expect(fake.backend.knownWords).toHaveBeenCalledWith(['猫', 'が', '好き', 'です']);
+        const tokens = [...root.querySelectorAll('.token')].map((token) => {
+            return [token.textContent, token.className];
+        });
+        expect(tokens).toEqual([
+            ['猫', 'token known'],
+            ['が', 'token unknown'],
+            ['好き', 'token known'],
+            ['です', 'token unknown'],
+        ]);
+    });
+
+    it('shows the sentence without underlines when Anki cannot be reached', async () => {
+        const { root, fake } = await mount((created) => {
+            vi.mocked(created.backend.knownWords).mockRejectedValue('cannot reach Anki');
+        });
+
+        fake.emitSentence(SENTENCE);
+        await vi.waitFor(() => {
+            expect(fake.backend.knownWords).toHaveBeenCalled();
+        });
+
+        expect(root.querySelectorAll('.token')).toHaveLength(4);
+        expect(root.querySelector('.known, .unknown')).toBeNull();
+        expect(text(root, '#message')).not.toBe('cannot reach Anki');
+    });
+
+    it('does not apply an answer that arrives after the next sentence', async () => {
+        let answer: (flags: boolean[]) => void = () => {
+            return undefined;
+        };
+        const { root, fake } = await mount((created) => {
+            vi.mocked(created.backend.knownWords).mockImplementationOnce(() => {
+                return new Promise<boolean[]>((resolve) => {
+                    answer = resolve;
+                });
+            });
+        });
+        fake.emitSentence(SENTENCE);
+        fake.emitSentence({ ...SENTENCE, text: '犬', tokens: [{ ...SENTENCE.tokens[0] as (typeof SENTENCE.tokens)[number], surface: '犬', lemma: '犬', start: 0, end: 1 }] });
+
+        answer([true, true, true, true]);
+        await Promise.resolve();
+
+        expect(root.querySelector('.known')).toBeNull();
+    });
 });
 

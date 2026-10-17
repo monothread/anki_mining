@@ -88,6 +88,13 @@ export const HOVER_RESULT: HoverResult = {
     charBbox: [160, 700, 200, 750],
     lineBbox: [40, 700, 760, 750],
     vertical: false,
+    tokens: [
+        { surface: '昨日', lemma: '昨日', reading: 'キノウ', pos: '名詞', start: 0, end: 2 },
+        { surface: '、', lemma: '、', reading: '', pos: '補助記号', start: 2, end: 3 },
+        { surface: '友達', lemma: '友達', reading: 'トモダチ', pos: '名詞', start: 3, end: 5 },
+        { surface: 'と', lemma: 'と', reading: 'ト', pos: '助詞', start: 5, end: 6 },
+        { surface: '映画', lemma: '映画', reading: 'エイガ', pos: '名詞', start: 6, end: 8 },
+    ],
 };
 
 export const SETTINGS: MiningSettings = {

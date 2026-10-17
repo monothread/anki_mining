@@ -348,3 +348,13 @@ input {
 .speak:hover {
     background: rgba(255, 255, 255, 0.12);
 }
+
+.token.known,
+.popup-token.known {
+    border-bottom: 2px solid #6fd08c;
+}
+
+.token.unknown,
+.popup-token.unknown {
+    border-bottom: 2px dashed rgba(255, 255, 255, 0.28);
+}

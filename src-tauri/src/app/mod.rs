@@ -188,6 +188,13 @@ fn mine_remembered(
 }
 
 #[tauri::command]
+fn known_words(state: State<'_, AppState>, words: Vec<String>) -> Result<Vec<bool>, String> {
+    state
+        .known_words(&words, None)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn speak_text(state: State<'_, AppState>, text: String) -> Result<(), String> {
     state.speak_aloud(&text)
 }
@@ -354,6 +361,7 @@ pub fn run() -> tauri::Result<()> {
             get_hover,
             mine_hover,
             speak_text,
+            known_words,
             set_hover_mode,
             set_hover_enabled,
             get_settings,
@@ -700,6 +708,7 @@ mod tests {
 
     fn remember(memory: &HoverMemory) {
         memory.set(HoverResult {
+            tokens: Vec::new(),
             sentence: "猫が好き".to_string(),
             word_start: 0,
             results: vec![ScanResult {

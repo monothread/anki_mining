@@ -30,6 +30,9 @@ class Handler(BaseHTTPRequestHandler):
             result = ["AnkiMining"]
         elif action == "deckNames":
             result = ["Default", "Mining"]
+        elif action == "multi":
+            # findNotes for each word: only words with 映 (映画) are "in Anki".
+            result = [[1] if "映" in a.get("params", {}).get("query", "") else [] for a in request.get("params", {}).get("actions", [])]
         elif action == "modelFieldNames":
             # A note type made by an older version of the app: no field for the word audio.
             result = ["Expression", "Reading", "Meaning", "Sentence", "SentenceAudio", "Picture", "Frequency", "Pitch", "Source"]

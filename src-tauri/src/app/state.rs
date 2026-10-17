@@ -10,7 +10,7 @@ use std::time::Instant;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::anki::{default_mining_model, AnkiClient, AnkiError};
+use crate::anki::{default_mining_model, known_word_query, AnkiClient, AnkiError};
 use crate::audio::{audio_file, SharedAudio};
 use crate::capture::Region;
 use crate::cards::{build_note, CardInput, MediaFile};
@@ -19,12 +19,14 @@ use crate::dictionary::MetadataStats;
 use crate::dictionary::{Dictionary, DictionaryError, ImportStats, ScanResult};
 use crate::hover::{card_input, HoverMemory};
 use crate::media::screenshot_file;
+use crate::pointer::WindowIdentity;
 use crate::profiles::{resolve, Origin};
 use crate::sources::mpv::SubtitleClock;
 use crate::sources::now_millis;
 use crate::sources::ocr::RegionHandle;
 use crate::text_offsets::utf16_offset_to_byte;
 use crate::tts::{play_wav, speech_file, Speaker, TtsError};
+use crate::types::profile::MiningField;
 
 /// Smaller areas cannot hold a readable line of text.
 pub const MIN_REGION_WIDTH: u32 = 32;
@@ -183,6 +185,59 @@ impl AppState {
     pub fn with_player(mut self, player: SoundPlayer) -> AppState {
         self.player = player;
         self
+    }
+
+    /// For each word, whether a card of it already exists in the deck of the profile a card made
+    /// now would go to (`identity` is where the word was found, when it is known). Anki being
+    /// closed is an error; it is not retried, so the answer is quick either way.
+    pub fn known_words(
+        &self,
+        words: &[String],
+        identity: Option<&WindowIdentity>,
+    ) -> Result<Vec<bool>, AppError> {
+        let config = self.config.get();
+        let origin = identity.map(|identity| Origin {
+            source_id: Some("screen".to_string()),
+            app_name: identity.app_name.clone(),
+            window_title: identity.title.clone(),
+        });
+        let profile = resolve(
+            &config.profiles,
+            &config.default_profile_id,
+            &origin.unwrap_or_default(),
+        )
+        .ok_or_else(|| AppError::UnknownProfile(config.default_profile_id.clone()))?;
+        let field = profile
+            .field_mapping
+            .get(&MiningField::Expression)
+            .filter(|name| !name.is_empty());
+        let Some(field) = field else {
+            return Ok(vec![false; words.len()]);
+        };
+
+        let mut unique: Vec<&String> = Vec::new();
+        for word in words {
+            if !unique.contains(&word) {
+                unique.push(word);
+            }
+        }
+        let queries: Vec<String> = unique
+            .iter()
+            .map(|word| known_word_query(&profile.deck_name, field, word))
+            .collect();
+        let found = AnkiClient::new(&config.anki_connect_url)
+            .with_retries(0)
+            .notes_exist(&queries)?;
+        Ok(words
+            .iter()
+            .map(|word| {
+                unique
+                    .iter()
+                    .position(|candidate| *candidate == word)
+                    .and_then(|index| found.get(index).copied())
+                    .unwrap_or(false)
+            })
+            .collect())
     }
 
     /// Reads `text` aloud (the listen buttons of the popup). The sound of a text that was read
@@ -887,6 +942,7 @@ mod tests {
 
     fn remembered(memory: &HoverMemory) {
         memory.set(crate::hover::HoverResult {
+            tokens: Vec::new(),
             sentence: "私は猫が好き".to_string(),
             word_start: 2,
             results: vec![ScanResult {
@@ -1898,5 +1954,130 @@ mod tests {
         let error = state.speak_aloud("ねこ").expect_err("must fail");
 
         assert_eq!(error, TtsError::NoPlayer.to_string());
+    }
+
+    #[test]
+    fn known_words_asks_anki_once_and_answers_for_every_word_in_order() {
+        let mock = MockAnki::start(vec![ok(json!([[11], []]))]);
+        let state = state_with(Config {
+            anki_connect_url: mock.url.clone(),
+            ..Config::default()
+        });
+        let words = ["猫".to_string(), "犬".to_string(), "猫".to_string()];
+
+        let known = state.known_words(&words, None).expect("known");
+
+        assert_eq!(known, vec![true, false, true]);
+        assert_eq!(
+            mock.requests(),
+            vec![json!({
+                "action": "multi",
+                "version": 6,
+                "params": { "actions": [
+                    { "action": "findNotes", "params": { "query": "\"deck:Mining\" \"Expression:猫\"" } },
+                    { "action": "findNotes", "params": { "query": "\"deck:Mining\" \"Expression:犬\"" } }
+                ] }
+            })]
+        );
+    }
+
+    #[test]
+    fn known_words_looks_in_the_deck_of_the_profile_of_the_application() {
+        let mock = MockAnki::start(vec![ok(json!([[]]))]);
+        let state = state_with(Config {
+            anki_connect_url: mock.url.clone(),
+            profiles: vec![
+                crate::config::default_profile(),
+                profile_for("player", "Anime", Some("mpv"), None),
+            ],
+            ..Config::default()
+        });
+        let identity = crate::pointer::WindowIdentity {
+            app_name: Some("mpv".to_string()),
+            title: None,
+        };
+
+        state
+            .known_words(&["猫".to_string()], Some(&identity))
+            .expect("known");
+
+        assert_eq!(
+            mock.requests()[0]["params"]["actions"][0]["params"]["query"],
+            json!("\"deck:Anime\" \"Expression:猫\"")
+        );
+    }
+
+    #[test]
+    fn known_words_uses_the_expression_field_name_of_the_profile() {
+        let mock = MockAnki::start(vec![ok(json!([[1]]))]);
+        let mut profile = crate::config::default_profile();
+        profile
+            .field_mapping
+            .insert(MiningField::Expression, "Front".to_string());
+        let state = state_with(Config {
+            anki_connect_url: mock.url.clone(),
+            profiles: vec![profile],
+            ..Config::default()
+        });
+
+        state.known_words(&["猫".to_string()], None).expect("known");
+
+        assert_eq!(
+            mock.requests()[0]["params"]["actions"][0]["params"]["query"],
+            json!("\"deck:Mining\" \"Front:猫\"")
+        );
+    }
+
+    #[test]
+    fn known_words_without_an_expression_field_marks_nothing_and_does_not_call_anki() {
+        let mock = MockAnki::start(vec![]);
+        let mut profile = crate::config::default_profile();
+        profile
+            .field_mapping
+            .insert(MiningField::Expression, String::new());
+        let state = state_with(Config {
+            anki_connect_url: mock.url.clone(),
+            profiles: vec![profile],
+            ..Config::default()
+        });
+
+        let known = state
+            .known_words(&["猫".to_string(), "犬".to_string()], None)
+            .expect("known");
+
+        assert_eq!(known, vec![false, false]);
+        assert!(mock.requests().is_empty());
+    }
+
+    #[test]
+    fn known_words_with_anki_closed_is_a_connection_error_without_retries() {
+        let state = state_with(Config {
+            anki_connect_url: "http://127.0.0.1:1".to_string(),
+            ..Config::default()
+        });
+        let started = Instant::now();
+
+        let error = state
+            .known_words(&["猫".to_string()], None)
+            .expect_err("must fail");
+
+        assert!(matches!(
+            error,
+            AppError::Anki(AnkiError::Connection { .. })
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_millis(150));
+    }
+
+    #[test]
+    fn known_words_of_no_words_is_empty() {
+        let state = state_with(Config {
+            anki_connect_url: "http://127.0.0.1:1".to_string(),
+            ..Config::default()
+        });
+
+        assert_eq!(
+            state.known_words(&[], None).expect("known"),
+            Vec::<bool>::new()
+        );
     }
 }
