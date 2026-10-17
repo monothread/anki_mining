@@ -25,7 +25,9 @@ Every word of a sentence (in the popup and in the main window) is underlined: a 
 already has a card in the deck cards go to, a dashed grey line means it does not. The app asks Anki once per
 sentence (one AnkiConnect request for all the words) and compares the dictionary form of each word with the
 `Expression` field of your cards, so `食べた` counts as `食べる`. It looks in the deck of the profile a card made
-now would go to. With Anki closed nothing is underlined.
+now would go to. With Anki closed nothing is underlined. When you click **Add to Anki** the button shows a spinner
+("Adding…") while the card is made, becomes "Added ✓" when it is done and the word is underlined in green at
+once, without asking Anki again.
 
 ## Spoken word and sentence
 

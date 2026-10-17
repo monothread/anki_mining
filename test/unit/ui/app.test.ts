@@ -932,5 +932,41 @@ describe('createApp window controls', () => {
 
         expect(root.querySelector('.known')).toBeNull();
     });
+
+    it('underlines the word right after it was added and shows the button as added', async () => {
+        const { root, fake } = await mount();
+        fake.emitSentence(SENTENCE);
+        hover(root, '猫');
+        await vi.waitFor(() => {
+            expect(root.querySelector('button.mine')).not.toBeNull();
+        });
+
+        root.querySelector<HTMLButtonElement>('button.mine')?.click();
+        await vi.waitFor(() => {
+            expect(root.querySelector('button.mine')?.textContent).toBe('Added \u2713');
+        });
+
+        expect(root.querySelector('.token.known')?.textContent).toBe('猫');
+        expect(root.querySelectorAll('.token.known')).toHaveLength(1);
+    });
+
+    it('does not underline the word when adding fails', async () => {
+        const { root, fake } = await mount((created) => {
+            vi.mocked(created.backend.mine).mockRejectedValue('duplicate');
+        });
+        fake.emitSentence(SENTENCE);
+        hover(root, '猫');
+        await vi.waitFor(() => {
+            expect(root.querySelector('button.mine')).not.toBeNull();
+        });
+
+        root.querySelector<HTMLButtonElement>('button.mine')?.click();
+        await vi.waitFor(() => {
+            expect(text(root, '#message')).toBe('duplicate');
+        });
+
+        expect(root.querySelector('.token.known')).toBeNull();
+        expect(root.querySelector<HTMLButtonElement>('button.mine')?.disabled).toBe(false);
+    });
 });
 

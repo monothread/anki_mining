@@ -358,3 +358,31 @@ input {
 .popup-token.unknown {
     border-bottom: 2px dashed rgba(255, 255, 255, 0.28);
 }
+
+.mine .spinner {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: 6px;
+    vertical-align: -1px;
+    border: 2px solid rgba(0, 0, 0, 0.25);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: mine-spin 0.7s linear infinite;
+}
+
+.mine.loading {
+    opacity: 0.8;
+    cursor: progress;
+}
+
+.mine.done {
+    background: #6fd08c;
+    cursor: default;
+}
+
+@keyframes mine-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}

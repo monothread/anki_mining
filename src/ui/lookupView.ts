@@ -3,7 +3,11 @@ import { pitchLabel, pitchPattern, splitMoras } from './pitch';
 
 export interface LookupViewHandlers {
     /** When absent, entries are shown without an "Add to Anki" button. */
-    onMine?: (result: ScanResult, found: DeinflectedEntry) => void;
+    /**
+     * When it returns a promise the button shows that the card is being added and then, when the
+     * promise is true, that it was added.
+     */
+    onMine?: (result: ScanResult, found: DeinflectedEntry) => Promise<boolean> | undefined;
     /** When absent, entries have no listen button. Called with the reading of the entry. */
     onSpeak?: (reading: string) => void;
 }
@@ -32,6 +36,24 @@ export function renderLookup(
         }
         container.append(section);
     }
+}
+
+const MINE_LABEL = 'Add to Anki';
+
+type MineState = 'idle' | 'loading' | 'done';
+
+/** The look of the "Add to Anki" button: ready, adding (spinner) or added. */
+function setMineState(button: HTMLButtonElement, state: MineState): void {
+    button.classList.toggle('loading', state === 'loading');
+    button.classList.toggle('done', state === 'done');
+    button.disabled = state !== 'idle';
+    button.replaceChildren();
+    if (state === 'loading') {
+        button.append(createElement('span', 'spinner'), 'Adding\u2026');
+    } else {
+        button.textContent = state === 'done' ? 'Added \u2713' : MINE_LABEL;
+    }
+    button.setAttribute('aria-busy', String(state === 'loading'));
 }
 
 function createEntryElement(
@@ -78,10 +100,24 @@ function createEntryElement(
 
     const onMine = handlers.onMine;
     if (onMine !== undefined) {
-        const button = createElement('button', 'mine', 'Add to Anki');
+        const button = createElement('button', 'mine', MINE_LABEL);
         button.type = 'button';
         button.addEventListener('click', () => {
-            onMine(result, found);
+            if (button.disabled) {
+                return;
+            }
+            const outcome = onMine(result, found);
+            if (outcome === undefined) {
+                return;
+            }
+            setMineState(button, 'loading');
+            void outcome
+                .then((added) => {
+                    setMineState(button, added ? 'done' : 'idle');
+                })
+                .catch(() => {
+                    setMineState(button, 'idle');
+                });
         });
         element.append(button);
     }

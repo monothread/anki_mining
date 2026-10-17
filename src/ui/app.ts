@@ -6,7 +6,7 @@ import type { DeinflectedEntry, ScanResult } from '../types/scan';
 import type { Sentence } from '../types/sentence';
 import type { Status } from '../types/status';
 import type { Token } from '../types/token';
-import { markKnown } from './known';
+import { markAdded, markKnown } from './known';
 import { renderLookup } from './lookupView';
 import { renderSettings } from './settingsView';
 import { isWordToken, markSelected, renderSentence } from './sentenceView';
@@ -151,13 +151,27 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
         current: Selection,
         result: ScanResult,
         found: DeinflectedEntry,
-    ): Promise<void> => {
+    ): Promise<boolean> => {
         const input = buildCardInput(current.sentence, current.token.start, result, found);
         try {
             const noteId = await backend.mine(input, null);
             showMessage(`Added ${found.entry.expression} (note ${String(noteId)})`, 'success');
+            // The word, and every other place the sentence has it, is now in Anki.
+            markAdded(
+                sentenceElement,
+                '.token',
+                current.sentence.tokens
+                    .filter((token) => {
+                        return token.start === current.token.start || token.lemma === found.entry.expression;
+                    })
+                    .map((token) => {
+                        return token.start;
+                    }),
+            );
+            return true;
         } catch (error) {
             showMessage(String(error), 'error');
+            return false;
         }
     };
 
@@ -180,7 +194,7 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
         markSelected(sentenceElement, token.start);
         renderLookup(lookupElement, results, {
             onMine: (result, found) => {
-                void mineEntry(current, result, found);
+                return mineEntry(current, result, found);
             },
             onSpeak: (reading) => {
                 void backend.speak(reading).catch((error: unknown) => {

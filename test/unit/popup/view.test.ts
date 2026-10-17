@@ -68,7 +68,7 @@ describe('renderHoverResult', () => {
     it('adds an "Add to Anki" button per entry when a mining handler is given', () => {
         const root = document.createElement('div');
 
-        renderHoverResult(root, HOVER_RESULT, { onMine: vi.fn<(r: number, e: number) => void>() });
+        renderHoverResult(root, HOVER_RESULT, { onMine: vi.fn<(r: number, e: number) => Promise<boolean> | undefined>() });
 
         const buttons = root.querySelectorAll<HTMLButtonElement>('button.mine');
         expect(buttons).toHaveLength(1);
@@ -77,7 +77,7 @@ describe('renderHoverResult', () => {
 
     it('reports the position of the chosen entry', () => {
         const root = document.createElement('div');
-        const onMine = vi.fn<(r: number, e: number) => void>();
+        const onMine = vi.fn<(r: number, e: number) => Promise<boolean> | undefined>();
         const second = {
             ...HOVER_RESULT.results[0],
             source: '友',

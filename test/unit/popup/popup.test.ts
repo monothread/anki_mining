@@ -227,5 +227,64 @@ describe('createPopup', () => {
         expect(root.querySelector('.known')).toBeNull();
         expect(root.querySelector('.popup-sentence')?.textContent).toBe('犬が好き');
     });
+
+    it('underlines the word as soon as it was added and the button says so', async () => {
+        const { root, mine, emitHoverResult } = await mount();
+        emitHoverResult(HOVER_RESULT);
+
+        root.querySelector<HTMLButtonElement>('button.mine')?.click();
+        await vi.waitFor(() => {
+            expect(root.querySelector('button.mine')?.textContent).toBe('Added \u2713');
+        });
+
+        expect(mine).toHaveBeenCalledWith(0, 0);
+        const tokens = [...root.querySelectorAll('.popup-token')].map((token) => {
+            return [token.textContent, token.classList.contains('known')];
+        });
+        expect(tokens).toEqual([
+            ['昨日', false],
+            ['友達', true],
+            ['と', false],
+            ['映画', false],
+        ]);
+    });
+
+    it('does not underline the word when the card could not be added', async () => {
+        const { root, mine, emitHoverResult } = await mount();
+        mine.mockResolvedValue({ success: false, message: 'duplicate' });
+        emitHoverResult(HOVER_RESULT);
+
+        root.querySelector<HTMLButtonElement>('button.mine')?.click();
+        await vi.waitFor(() => {
+            expect(message(root).textContent).toBe('duplicate');
+        });
+
+        expect(root.querySelector('.known')).toBeNull();
+        expect(root.querySelector<HTMLButtonElement>('button.mine')?.disabled).toBe(false);
+    });
+
+    it('does not underline the word when the request itself fails', async () => {
+        const { root, mine, emitHoverResult } = await mount();
+        mine.mockRejectedValue('Anki is not running');
+        emitHoverResult(HOVER_RESULT);
+
+        root.querySelector<HTMLButtonElement>('button.mine')?.click();
+        await vi.waitFor(() => {
+            expect(message(root).textContent).toBe('Anki is not running');
+        });
+
+        expect(root.querySelector('.known')).toBeNull();
+    });
+
+    it('underlines the word that the mining shortcut added', async () => {
+        const { root, emitHoverResult, emitMineResult } = await mount();
+        emitHoverResult(HOVER_RESULT);
+
+        emitMineResult({ success: true, message: 'Added 友達 (note 1)' });
+
+        expect(root.querySelector('.popup-token.known')?.textContent).toBe('友達');
+        emitMineResult({ success: false, message: 'duplicate' });
+        expect(root.querySelectorAll('.popup-token.known')).toHaveLength(1);
+    });
 });
 

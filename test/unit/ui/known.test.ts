@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clearKnown, markKnown } from '../../../src/ui/known';
+import { clearKnown, markAdded, markKnown } from '../../../src/ui/known';
 
 function words(): HTMLElement {
     const root = document.createElement('div');
@@ -48,3 +48,27 @@ describe('markKnown', () => {
         expect(classes(root)).toEqual(['token', 'token', 'token', 'token']);
     });
 });
+
+describe('markAdded', () => {
+    it('marks only the given words as known and leaves the other marks alone', () => {
+        const root = words();
+        markKnown(root, '.token', [
+            { start: 0, known: false },
+            { start: 1, known: true },
+        ]);
+
+        markAdded(root, '.token', [0, 2]);
+
+        expect(classes(root)).toEqual(['token known', 'token known', 'token known', 'token']);
+    });
+
+    it('does nothing for words that are not there', () => {
+        const root = words();
+
+        markAdded(root, '.token', [9]);
+        markAdded(root, '.token', []);
+
+        expect(classes(root)).toEqual(['token', 'token', 'token', 'token']);
+    });
+});
+

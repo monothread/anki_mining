@@ -31,3 +31,15 @@ export function clearKnown(container: HTMLElement, selector: string): void {
         element.classList.remove('known', 'unknown');
     }
 }
+
+/** Underlines as known the word elements that start at one of `starts` (the others are left as they are). */
+export function markAdded(container: HTMLElement, selector: string, starts: readonly number[]): void {
+    const added = new Set(starts.map(String));
+    for (const element of container.querySelectorAll<HTMLElement>(selector)) {
+        const start = element.dataset['start'];
+        if (start !== undefined && added.has(start)) {
+            element.classList.add('known');
+            element.classList.remove('unknown');
+        }
+    }
+}

@@ -3,7 +3,7 @@ import type { DeinflectedEntry, ScanResult } from '../../../src/types/scan';
 import { formatReasons, renderLookup } from '../../../src/ui/lookupView';
 import { CAT_ENTRY, CAT_RESULT, EAT_RESULT } from '../../support/fixtures';
 
-type MineHandler = (result: ScanResult, found: DeinflectedEntry) => void;
+type MineHandler = (result: ScanResult, found: DeinflectedEntry) => Promise<boolean> | undefined;
 
 function render(results: ScanResult[]): {
     container: HTMLElement;
@@ -210,6 +210,108 @@ describe('renderLookup listen buttons', () => {
         expect(onSpeak.mock.calls).toEqual([['たべる'], ['ねこ']]);
         expect(buttons[0]?.getAttribute('aria-label')).toBe('Listen to 猫');
         expect(buttons[0]?.title).toBe('Listen');
+    });
+});
+
+describe('renderLookup "Add to Anki" button states', () => {
+    function mineButton(container: HTMLElement): HTMLButtonElement {
+        const button = container.querySelector<HTMLButtonElement>('button.mine');
+        if (button === null) {
+            throw new Error('no mine button');
+        }
+        return button;
+    }
+
+    function renderWith(outcome: () => Promise<boolean> | undefined): HTMLElement {
+        const container = document.createElement('div');
+        renderLookup(container, [CAT_RESULT], { onMine: outcome });
+        return container;
+    }
+
+    it('shows a loading state while the card is being added and then that it was added', async () => {
+        let finish: (added: boolean) => void = () => {
+            return undefined;
+        };
+        const container = renderWith(() => {
+            return new Promise<boolean>((resolve) => {
+                finish = resolve;
+            });
+        });
+        const button = mineButton(container);
+
+        button.click();
+
+        expect(button.disabled).toBe(true);
+        expect(button.classList.contains('loading')).toBe(true);
+        expect(button.querySelector('.spinner')).not.toBeNull();
+        expect(button.textContent).toBe('Adding\u2026');
+        expect(button.getAttribute('aria-busy')).toBe('true');
+
+        finish(true);
+        await vi.waitFor(() => {
+            expect(button.classList.contains('done')).toBe(true);
+        });
+
+        expect(button.textContent).toBe('Added \u2713');
+        expect(button.disabled).toBe(true);
+        expect(button.querySelector('.spinner')).toBeNull();
+        expect(button.getAttribute('aria-busy')).toBe('false');
+    });
+
+    it('goes back to "Add to Anki" when the card could not be added', async () => {
+        const container = renderWith(() => {
+            return Promise.resolve(false);
+        });
+        const button = mineButton(container);
+
+        button.click();
+        await vi.waitFor(() => {
+            expect(button.disabled).toBe(false);
+        });
+
+        expect(button.textContent).toBe('Add to Anki');
+        expect(button.classList.contains('loading')).toBe(false);
+        expect(button.classList.contains('done')).toBe(false);
+    });
+
+    it('goes back to "Add to Anki" when adding rejects', async () => {
+        const container = renderWith(() => {
+            return Promise.reject(new Error('boom'));
+        });
+        const button = mineButton(container);
+
+        button.click();
+        await vi.waitFor(() => {
+            expect(button.disabled).toBe(false);
+        });
+
+        expect(button.textContent).toBe('Add to Anki');
+    });
+
+    it('ignores a second click while the first one is being added', () => {
+        const onMine = vi.fn<MineHandler>().mockReturnValue(new Promise<boolean>(() => {
+            return undefined;
+        }));
+        const container = document.createElement('div');
+        renderLookup(container, [CAT_RESULT], { onMine });
+        const button = mineButton(container);
+
+        button.click();
+        button.click();
+
+        expect(onMine).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the button as it is when the handler does not report a result', () => {
+        const container = renderWith(() => {
+            return undefined;
+        });
+        const button = mineButton(container);
+
+        button.click();
+
+        expect(button.disabled).toBe(false);
+        expect(button.textContent).toBe('Add to Anki');
     });
 });
 

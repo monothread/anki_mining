@@ -6,7 +6,7 @@ import { isWordToken } from '../ui/sentenceView';
 
 export interface PopupHandlers {
     /** Called with the position of the chosen entry; without it entries have no "Add to Anki" button. */
-    onMine?: (resultIndex: number, entryIndex: number) => void;
+    onMine?: (resultIndex: number, entryIndex: number) => Promise<boolean> | undefined;
     /** Called with the reading of an entry whose listen button was clicked. */
     onSpeak?: (reading: string) => void;
 }
@@ -38,7 +38,7 @@ export function renderHoverResult(
     const lookupHandlers: LookupViewHandlers = {};
     if (onMine !== undefined) {
         lookupHandlers.onMine = (matched, found) => {
-            onMine(...positionOf(result.results, matched, found));
+            return onMine(...positionOf(result.results, matched, found));
         };
     }
     if (handlers.onSpeak !== undefined) {
