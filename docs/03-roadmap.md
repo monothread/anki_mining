@@ -73,3 +73,13 @@ The product must work after installing a single app, with no browser extension o
 - [x] P6-02 — Yomitan dictionary importer
 - [-] P6-03 — Wayland backends (`ScreenCapture` portal/PipeWire, `GlobalHotkey`, `OverlayWindow` layer-shell)
 - [x] P6-04 — Packaging: AppImage is built from the start via `scripts/dev.sh appimage`; here add Flatpak, release automation and installation docs (release workflow and CI done; Flatpak not done, see ADR-016)
+
+## Phase 7 — Windows, updates and releases
+**Acceptance criteria:** a Windows installer and a Linux AppImage are published on GitHub, installed apps update themselves, and a pipeline proves on a real Windows machine that the build and the app work (ADR-019).
+- [x] P7-01 — Windows backends for capture, pointer, mpv pipe, audio loopback, voice playback; per-platform bundle resources
+- [x] P7-02 — Docker build for Windows (cross-compile + NSIS) with `scripts/win.sh`
+- [x] P7-03 — `--self-test` mode and the *Windows* workflow (tests, installer, install, self-test, app opens)
+- [x] P7-04 — Signed automatic updates from GitHub releases (banner, setting, `latest.json`)
+- [x] P7-05 — Release tooling (`scripts/release.sh`, `release.yml`) and the first release, v0.1.0
+- [ ] P7-06 — Authenticode signing of the Windows installer (needs a code-signing certificate)
+

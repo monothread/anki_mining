@@ -42,12 +42,23 @@ echo "== Linux AppImage"
 TAURI_SIGNING_PRIVATE_KEY="$(cat "${KEY_FILE}")" scripts/dev.sh appimage
 cp dist/AnkiMining_*_amd64.AppImage dist/AnkiMining_*_amd64.AppImage.sig "${WORK}/"
 
-echo "== Windows installer (latest successful run of the Windows workflow on this commit)"
-run_id="$(gh run list --workflow windows.yml --commit "$(git rev-parse HEAD)" --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
-if [ -z "${run_id}" ] || [ "${run_id}" = "null" ]; then
-    echo "no successful Windows run for this commit; run: gh workflow run windows.yml" >&2
+echo "== Windows installer (a successful run of the Windows workflow for this code)"
+# The installer must come from this code. A run of an earlier commit is accepted when what
+# changed since then is only documentation, workflows or release scripts.
+run_id=""
+while read -r id sha; do
+    changed="$(git diff --name-only "${sha}" HEAD 2>/dev/null || echo unknown)"
+    other="$(printf '%s\n' "${changed}" | grep -Ev '^(docs/.*|README\.md|\.github/.*|scripts/(release\.sh|latest_json\.py|test_latest_json\.py))$' | grep -v '^$' || true)"
+    if [ -z "${other}" ]; then
+        run_id="${id}"
+        break
+    fi
+done < <(gh run list --workflow windows.yml --status success --limit 10 --json databaseId,headSha --jq '.[] | "\(.databaseId) \(.headSha)"')
+if [ -z "${run_id}" ]; then
+    echo "no successful Windows run for this code; run: gh workflow run windows.yml" >&2
     exit 1
 fi
+echo "using the Windows run ${run_id}"
 rm -rf "${WORK}/windows"
 gh run download "${run_id}" --name windows-installer --dir "${WORK}/windows"
 cp "${WORK}"/windows/*-setup.exe "${WORK}"/windows/*-setup.exe.sig "${WORK}/"
