@@ -56,7 +56,7 @@ The product must work after installing a single app, with no browser extension o
 ## Phase 4 — Exact-text sources (mpv)
 **Acceptance criteria:** mpv subtitles appear in the overlay with timestamps and cards use the exact clip. There is no browser extension (user decision).
 - [x] P4-02 — `MpvSource` via IPC socket (exact subtitle text, no OCR)
-- [ ] P4-03 — Sync audio trimming with subtitle timestamps
+- [x] P4-03 — Sync audio trimming with subtitle timestamps
 - [ ] P4-05 — Evaluate AT-SPI (accessibility) as a text source for apps that expose text; keep only if coverage is useful
 - [-] P4-01 — Browser extension: dropped by user decision (the app works without one)
 - [ ] P4-04 — Tests and documentation

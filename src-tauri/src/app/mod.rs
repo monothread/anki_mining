@@ -11,8 +11,8 @@ use std::thread;
 
 use serde::Serialize;
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl,
-    WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, RunEvent, State, WebviewUrl,
+    WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -66,7 +66,29 @@ type StartedSources = (
 struct MpvStatus(Option<MpvConnection>);
 
 /// Keeps the running sources alive for the lifetime of the app.
-struct RunningSources(#[allow(dead_code)] Mutex<Vec<Box<dyn TextSource>>>);
+struct RunningSources(Mutex<Vec<Box<dyn TextSource>>>);
+
+/// The program that records the sound; it is stopped when the app closes.
+struct RecorderHandle(Mutex<Option<AudioRecorder>>);
+
+const MAIN_LABEL: &str = "main";
+
+/// Stops everything that runs in the background: the text sources and the sound recorder (a
+/// separate program that would otherwise keep running).
+fn shutdown(app: &AppHandle) {
+    if let Some(recorder) = app.try_state::<RecorderHandle>() {
+        if let Ok(mut recorder) = recorder.0.lock() {
+            recorder.take();
+        }
+    }
+    if let Some(sources) = app.try_state::<RunningSources>() {
+        if let Ok(mut sources) = sources.0.lock() {
+            for source in sources.iter_mut() {
+                let _ = source.stop();
+            }
+        }
+    }
+}
 
 #[tauri::command]
 fn get_status(state: State<'_, AppState>, mpv: State<'_, MpvStatus>) -> Result<Status, String> {
@@ -313,7 +335,21 @@ pub fn run() -> tauri::Result<()> {
             cancel_region_selection,
             open_region_selector
         ])
-        .run(tauri::generate_context!())
+        .on_window_event(|window, event| {
+            // The popup and the other windows are hidden helpers: closing the main window
+            // closes the app and everything it started.
+            if window.label() == MAIN_LABEL && matches!(event, WindowEvent::CloseRequested { .. }) {
+                shutdown(window.app_handle());
+                window.app_handle().exit(0);
+            }
+        })
+        .build(tauri::generate_context!())?
+        .run(|app, event| {
+            if matches!(event, RunEvent::Exit) {
+                shutdown(app);
+            }
+        });
+    Ok(())
 }
 
 fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -361,7 +397,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     if config.audio_on_cards {
         match AudioRecorder::start(Arc::clone(&audio)) {
             Ok(recorder) => {
-                app.manage(recorder);
+                app.manage(RecorderHandle(Mutex::new(Some(recorder))));
             }
             Err(error) => {
                 warnings.push(format!("Cards will have no audio: {error}"));
