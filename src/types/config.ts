@@ -21,6 +21,8 @@ export interface Config {
     audioSeconds: number;
     /** What to do when the card already exists in the deck. */
     duplicatePolicy: 'skip' | 'allow';
+    /** Whether closing the window keeps the app running in the system tray. */
+    closeToTray: boolean;
     defaultProfileId: string;
     profiles: Profile[];
 }

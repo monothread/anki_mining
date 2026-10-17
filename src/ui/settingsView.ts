@@ -162,6 +162,7 @@ export function readSettings(root: HTMLElement): MiningSettings {
         audioOnCards: input(root, 'audioOnCards').checked,
         audioSeconds: Number.isNaN(seconds) ? MIN_AUDIO_SECONDS : seconds,
         duplicatePolicy: select('duplicatePolicy').value === 'allow' ? 'allow' : 'skip',
+        closeToTray: input(root, 'closeToTray').checked,
     };
 }
 
@@ -215,6 +216,7 @@ export function renderSettings(root: HTMLElement, settings: MiningSettings, hand
         labelled('Longest audio clip (seconds)', audioSecondsInput(settings.audioSeconds)),
         labelled('When the card already exists', duplicateSelect(settings.duplicatePolicy)),
         labelled('Default profile', defaultProfileSelect(settings)),
+        labelled('Keep running in the system tray when the window is closed', checkbox('closeToTray', settings.closeToTray)),
     );
     root.append(general);
 

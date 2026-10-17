@@ -11,4 +11,6 @@ export interface MiningSettings {
     audioOnCards: boolean;
     audioSeconds: number;
     duplicatePolicy: DuplicatePolicy;
+    /** Whether closing the window keeps the app running in the system tray. */
+    closeToTray: boolean;
 }

@@ -3,6 +3,7 @@
 pub mod hover;
 pub mod pipeline;
 pub mod state;
+mod tray;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
@@ -119,10 +120,13 @@ fn get_settings(state: State<'_, AppState>) -> MiningSettings {
 
 #[tauri::command]
 fn save_settings(
+    app: AppHandle,
     state: State<'_, AppState>,
     settings: MiningSettings,
 ) -> Result<MiningSettings, String> {
-    state.save_settings(settings)
+    let saved = state.save_settings(settings)?;
+    tray::sync_tray(&app, saved.close_to_tray)?;
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -338,9 +342,22 @@ pub fn run() -> tauri::Result<()> {
         .on_window_event(|window, event| {
             // The popup and the other windows are hidden helpers: closing the main window
             // closes the app and everything it started.
-            if window.label() == MAIN_LABEL && matches!(event, WindowEvent::CloseRequested { .. }) {
-                shutdown(window.app_handle());
-                window.app_handle().exit(0);
+            let WindowEvent::CloseRequested { api, .. } = event else {
+                return;
+            };
+            if window.label() != MAIN_LABEL {
+                return;
+            }
+            let app = window.app_handle();
+            let keep_running = app
+                .try_state::<AppState>()
+                .is_some_and(|state| state.settings().close_to_tray);
+            if keep_running {
+                api.prevent_close();
+                tray::hide_main_window(app);
+            } else {
+                shutdown(app);
+                app.exit(0);
             }
         })
         .build(tauri::generate_context!())?
@@ -404,6 +421,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    let close_to_tray = config.close_to_tray;
     app.manage(
         AppState::new(
             config,
@@ -420,6 +438,9 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .with_subtitles(subtitle_clock.unwrap_or_default()),
     );
     start_hover(app, &hover_control, &tokenizer);
+    if let Err(error) = tray::sync_tray(app, close_to_tray) {
+        let _ = app.emit("app-error", error);
+    }
     Ok(())
 }
 

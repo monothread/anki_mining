@@ -103,4 +103,5 @@ export const SETTINGS: MiningSettings = {
     audioOnCards: true,
     audioSeconds: 8,
     duplicatePolicy: 'skip',
+    closeToTray: false,
 };

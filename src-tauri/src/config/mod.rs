@@ -67,6 +67,8 @@ pub struct Config {
     pub audio_seconds: u32,
     /// What to do when the card already exists in the deck.
     pub duplicate_policy: DuplicatePolicy,
+    /// Whether closing the window keeps the app running in the system tray.
+    pub close_to_tray: bool,
     pub default_profile_id: String,
     pub profiles: Vec<Profile>,
 }
@@ -86,6 +88,7 @@ impl Default for Config {
             audio_on_cards: true,
             audio_seconds: 8,
             duplicate_policy: DuplicatePolicy::Skip,
+            close_to_tray: false,
             default_profile_id: DEFAULT_PROFILE_ID.to_string(),
             profiles: vec![default_profile()],
         }
@@ -102,6 +105,7 @@ pub struct MiningSettings {
     pub audio_on_cards: bool,
     pub audio_seconds: u32,
     pub duplicate_policy: DuplicatePolicy,
+    pub close_to_tray: bool,
 }
 
 impl MiningSettings {
@@ -113,6 +117,7 @@ impl MiningSettings {
             audio_on_cards: config.audio_on_cards,
             audio_seconds: config.audio_seconds,
             duplicate_policy: config.duplicate_policy,
+            close_to_tray: config.close_to_tray,
         }
     }
 
@@ -123,6 +128,7 @@ impl MiningSettings {
         config.audio_on_cards = self.audio_on_cards;
         config.audio_seconds = self.audio_seconds;
         config.duplicate_policy = self.duplicate_policy;
+        config.close_to_tray = self.close_to_tray;
     }
 }
 
@@ -310,6 +316,7 @@ mod tests {
         assert!(config.audio_on_cards);
         assert_eq!(config.audio_seconds, 8);
         assert_eq!(config.duplicate_policy, DuplicatePolicy::Skip);
+        assert!(!config.close_to_tray);
         assert_eq!(config.default_profile_id, "default");
         assert_eq!(config.profiles, vec![default_profile()]);
         assert_eq!(config.profiles[0].deck_name, "Mining");
@@ -333,6 +340,7 @@ mod tests {
         assert_eq!(value["audioOnCards"], json!(true));
         assert_eq!(value["audioSeconds"], json!(8));
         assert_eq!(value["duplicatePolicy"], json!("skip"));
+        assert_eq!(value["closeToTray"], json!(false));
         assert_eq!(value["defaultProfileId"], json!("default"));
         assert_eq!(value["profiles"][0]["deckName"], json!("Mining"));
     }
@@ -728,6 +736,7 @@ mod tests {
         settings.audio_seconds = 3;
         settings.duplicate_policy = DuplicatePolicy::Allow;
         settings.screenshot_on_cards = false;
+        settings.close_to_tray = true;
 
         settings.clone().apply_to(&mut config);
 
@@ -737,6 +746,8 @@ mod tests {
         assert_eq!(value["audioSeconds"], json!(3));
         assert_eq!(value["duplicatePolicy"], json!("allow"));
         assert_eq!(value["screenshotOnCards"], json!(false));
+        assert_eq!(value["closeToTray"], json!(true));
+        assert!(config.close_to_tray);
         assert_eq!(value["defaultProfileId"], json!("default"));
         assert_eq!(value["profiles"][0]["match"]["windowTitle"], json!(null));
     }

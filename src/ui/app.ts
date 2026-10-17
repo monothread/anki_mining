@@ -224,12 +224,16 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
         settingsElement.replaceChildren();
         sentenceElement.hidden = false;
         lookupElement.hidden = false;
+        void refreshStatus().catch((error: unknown) => {
+            showMessage(String(error), 'error');
+        });
     };
 
     const openSettings = async (): Promise<void> => {
         const settings = await backend.getSettings();
         sentenceElement.hidden = true;
         lookupElement.hidden = true;
+        setupElement.hidden = true;
         settingsElement.hidden = false;
         renderSettings(settingsElement, settings, {
             onSave: (changed) => {

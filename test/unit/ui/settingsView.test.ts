@@ -64,6 +64,7 @@ describe('renderSettings', () => {
         expect(field(root, 'screenshotOnCards').checked).toBe(true);
         expect(field(root, 'audioOnCards').checked).toBe(true);
         expect(field(root, 'audioSeconds').value).toBe('8');
+        expect(field(root, 'closeToTray').checked).toBe(false);
         expect(root.querySelector<HTMLSelectElement>('select[name="duplicatePolicy"]')?.value).toBe('skip');
         expect(root.querySelector<HTMLSelectElement>('select[name="defaultProfileId"]')?.value).toBe('default');
     });
@@ -98,6 +99,7 @@ describe('renderSettings', () => {
         type(field(player, 'map-picture'), 'Image');
         type(field(root, 'audioSeconds'), '12');
         field(root, 'screenshotOnCards').checked = false;
+        field(root, 'closeToTray').checked = true;
         const policy = root.querySelector<HTMLSelectElement>('select[name="duplicatePolicy"]');
         if (policy) {
             policy.value = 'allow';
@@ -123,6 +125,7 @@ describe('renderSettings', () => {
             audioOnCards: true,
             audioSeconds: 12,
             duplicatePolicy: 'allow',
+            closeToTray: true,
         });
     });
 

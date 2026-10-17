@@ -798,4 +798,23 @@ describe('createApp window controls', () => {
             expect(text(root, '#message')).toBe('cannot close');
         });
     });
+
+    it('hides the dictionary import while the settings are open and brings it back after', async () => {
+        const { root } = await mount((created) => {
+            vi.mocked(created.backend.getStatus).mockResolvedValue({ ...STATUS, dictionaryEntries: 0 });
+        });
+        const setup = root.querySelector<HTMLElement>('#setup');
+        expect(setup?.hidden).toBe(false);
+
+        root.querySelector<HTMLButtonElement>('#open-settings')?.click();
+        await vi.waitFor(() => {
+            expect(root.querySelector('.save-settings')).not.toBeNull();
+        });
+        expect(setup?.hidden).toBe(true);
+
+        root.querySelector<HTMLButtonElement>('.cancel-settings')?.click();
+        await vi.waitFor(() => {
+            expect(setup?.hidden).toBe(false);
+        });
+    });
 });

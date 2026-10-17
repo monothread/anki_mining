@@ -25,7 +25,7 @@ Open **Settings** to choose where cards go. A profile has a deck, a note type, a
 decide when it is used: the application (its window class, e.g. `mpv` or `Navigator`), a word in the window title
 (e.g. `YouTube`, to tell sites apart in a browser) and the text source. The profile with the most matching rules
 wins; the default profile is used when none matches. You can also choose whether the card is refused or added
-again when it already exists in the deck.
+again when it already exists in the deck. **Keep running in the system tray** makes the close button hide the window instead of quitting; use the tray menu to quit.
 
 ## How it works
 
