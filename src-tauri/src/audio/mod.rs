@@ -7,6 +7,7 @@ use std::io::Read;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Instant;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -37,6 +38,10 @@ pub enum AudioError {
 pub struct AudioBuffer {
     samples: VecDeque<i16>,
     capacity: usize,
+    /// How many samples were ever pushed (the position just after the newest one).
+    total: u64,
+    /// When the newest samples were pushed, to turn a point in time into a position.
+    last_push: Option<Instant>,
 }
 
 pub type SharedAudio = Arc<Mutex<AudioBuffer>>;
@@ -46,6 +51,8 @@ impl AudioBuffer {
         AudioBuffer {
             samples: VecDeque::new(),
             capacity: seconds * SAMPLE_RATE as usize,
+            total: 0,
+            last_push: None,
         }
     }
 
@@ -62,10 +69,52 @@ impl AudioBuffer {
     }
 
     pub fn push(&mut self, samples: &[i16]) {
+        self.push_at(samples, Instant::now());
+    }
+
+    /// Adds samples that arrived at `at` (the newest sample is taken as heard at that moment).
+    pub fn push_at(&mut self, samples: &[i16], at: Instant) {
+        self.total += samples.len() as u64;
+        self.last_push = Some(at);
         self.samples.extend(samples.iter().copied());
         while self.samples.len() > self.capacity {
             self.samples.pop_front();
         }
+    }
+
+    /// The sound heard between `start` and `end` (with a little around it), at most
+    /// `max_seconds` long. `None` when that time is no longer in the buffer or was silent.
+    pub fn clip_between(
+        &self,
+        start: Instant,
+        end: Instant,
+        max_seconds: usize,
+    ) -> Option<Vec<i16>> {
+        let newest = self.last_push?;
+        let position = |at: Instant| -> i64 {
+            let behind = if newest >= at {
+                -(newest.duration_since(at).as_secs_f64())
+            } else {
+                at.duration_since(newest).as_secs_f64()
+            };
+            self.samples.len() as i64 + (behind * f64::from(SAMPLE_RATE)).round() as i64
+        };
+        let padding = (PADDING_MS * SAMPLE_RATE as usize / 1000) as i64;
+        let length = self.samples.len() as i64;
+        let from = (position(start) - padding).clamp(0, length);
+        let mut to = (position(end) + padding).clamp(0, length);
+        to = to.min(from + (max_seconds * SAMPLE_RATE as usize) as i64);
+        if from >= to {
+            return None;
+        }
+        let clip: Vec<i16> = self
+            .samples
+            .iter()
+            .skip(from as usize)
+            .take((to - from) as usize)
+            .copied()
+            .collect();
+        clip.iter().any(|sample| is_sound(*sample)).then_some(clip)
     }
 
     /// The last stretch of speech, at most `max_seconds` long. The silence at the end (the video
@@ -434,5 +483,103 @@ mod tests {
 
         let stored: Vec<i16> = buffer.lock().unwrap().samples.iter().copied().collect();
         assert_eq!(stored, vec![1, 2]);
+    }
+
+    fn timed_buffer() -> (AudioBuffer, Instant) {
+        // 10 s of sound that ended at `now`: silence 0-4 s, speech 4-6 s, silence 6-10 s.
+        let mut buffer = AudioBuffer::new(BUFFER_SECONDS);
+        let now = Instant::now();
+        let mut samples = silence(4.0);
+        samples.extend(sound(2.0));
+        samples.extend(silence(4.0));
+        buffer.push_at(&samples, now);
+        (buffer, now)
+    }
+
+    #[test]
+    fn a_clip_between_two_moments_is_the_sound_heard_then() {
+        let (buffer, now) = timed_buffer();
+        let padding = PADDING_MS * SAMPLE_RATE as usize / 1000;
+
+        let clip = buffer
+            .clip_between(
+                now - std::time::Duration::from_secs(6),
+                now - std::time::Duration::from_secs(4),
+                30,
+            )
+            .expect("clip");
+
+        assert_eq!(clip.len(), seconds(2.0) + 2 * padding);
+        assert!(clip[padding..padding + seconds(2.0)]
+            .iter()
+            .all(|sample| *sample == LOUD));
+        assert_eq!(clip[0], 0);
+    }
+
+    #[test]
+    fn a_clip_between_two_moments_of_silence_is_nothing() {
+        let (buffer, now) = timed_buffer();
+
+        let clip = buffer.clip_between(
+            now - std::time::Duration::from_secs(3),
+            now - std::time::Duration::from_secs(1),
+            30,
+        );
+
+        assert_eq!(clip, None);
+    }
+
+    #[test]
+    fn moments_that_the_buffer_no_longer_holds_give_no_clip() {
+        let (buffer, now) = timed_buffer();
+
+        let clip = buffer.clip_between(
+            now - std::time::Duration::from_secs(40),
+            now - std::time::Duration::from_secs(30),
+            30,
+        );
+
+        assert_eq!(clip, None);
+    }
+
+    #[test]
+    fn a_clip_may_end_slightly_after_the_newest_sound() {
+        let mut buffer = AudioBuffer::new(BUFFER_SECONDS);
+        let now = Instant::now();
+        buffer.push_at(&sound(2.0), now);
+
+        let clip = buffer
+            .clip_between(
+                now - std::time::Duration::from_secs(1),
+                now + std::time::Duration::from_millis(80),
+                30,
+            )
+            .expect("clip");
+
+        assert_eq!(
+            clip.len(),
+            seconds(1.0) + PADDING_MS * SAMPLE_RATE as usize / 1000
+        );
+    }
+
+    #[test]
+    fn a_clip_between_two_moments_respects_the_limit() {
+        let mut buffer = AudioBuffer::new(BUFFER_SECONDS);
+        let now = Instant::now();
+        buffer.push_at(&sound(20.0), now);
+
+        let clip = buffer
+            .clip_between(now - std::time::Duration::from_secs(15), now, 3)
+            .expect("clip");
+
+        assert_eq!(clip.len(), seconds(3.0));
+    }
+
+    #[test]
+    fn an_empty_buffer_has_no_clip_between_moments() {
+        let buffer = AudioBuffer::new(5);
+        let now = Instant::now();
+
+        assert_eq!(buffer.clip_between(now, now, 5), None);
     }
 }

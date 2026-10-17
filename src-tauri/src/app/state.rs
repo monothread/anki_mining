@@ -3,6 +3,7 @@ use std::io::BufReader;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use serde::Serialize;
 use thiserror::Error;
@@ -16,6 +17,7 @@ use crate::dictionary::{Dictionary, DictionaryError, ImportStats, ScanResult};
 use crate::hover::{card_input, HoverMemory};
 use crate::media::screenshot_file;
 use crate::profiles::{resolve, Origin};
+use crate::sources::mpv::SubtitleClock;
 use crate::sources::now_millis;
 use crate::sources::ocr::RegionHandle;
 use crate::text_offsets::utf16_offset_to_byte;
@@ -80,6 +82,16 @@ pub struct AppState {
     ocr_region: RegionHandle,
     model_ready: AtomicBool,
     audio: Option<SharedAudio>,
+    subtitles: Option<SubtitleClock>,
+}
+
+/// Whether the text read from the screen is (part of) the subtitle line, ignoring spaces.
+fn same_line(subtitle: &str, read: &str) -> bool {
+    let squash = |text: &str| -> String { text.chars().filter(|c| !c.is_whitespace()).collect() };
+    let (subtitle, read) = (squash(subtitle), squash(read));
+    !subtitle.is_empty()
+        && !read.is_empty()
+        && (subtitle.contains(&read) || read.contains(&subtitle))
 }
 
 impl AppState {
@@ -98,6 +110,7 @@ impl AppState {
             ocr_region,
             model_ready: AtomicBool::new(false),
             audio: None,
+            subtitles: None,
         }
     }
 
@@ -125,17 +138,33 @@ impl AppState {
         self
     }
 
-    fn sentence_audio(&self) -> Option<MediaFile> {
+    /// Tells the state when mpv's subtitles appear and go away, so a card made from one of them
+    /// gets exactly the sound of that line.
+    pub fn with_subtitles(mut self, subtitles: SubtitleClock) -> AppState {
+        self.subtitles = Some(subtitles);
+        self
+    }
+
+    fn sentence_audio(&self, sentence: &str) -> Option<MediaFile> {
         let config = self.config.get();
         if !config.audio_on_cards {
             return None;
         }
-        let clip = self
-            .audio
-            .as_ref()?
-            .lock()
-            .ok()?
-            .clip(config.audio_seconds as usize)?;
+        let buffer = self.audio.as_ref()?.lock().ok()?;
+        let seconds = config.audio_seconds as usize;
+        let exact = self
+            .subtitles
+            .as_ref()
+            .and_then(SubtitleClock::current)
+            .filter(|span| same_line(&span.text, sentence))
+            .and_then(|span| {
+                buffer.clip_between(
+                    span.started,
+                    span.ended.unwrap_or_else(Instant::now),
+                    seconds,
+                )
+            });
+        let clip = exact.or_else(|| buffer.clip(seconds))?;
         Some(audio_file(&clip, now_millis()))
     }
 
@@ -217,7 +246,7 @@ impl AppState {
                 .screenshot()
                 .and_then(|image| screenshot_file(&image, now_millis()).ok());
         }
-        input.audio = self.sentence_audio();
+        input.audio = self.sentence_audio(&input.sentence);
         let identity = memory.identity();
         let origin = Origin {
             source_id: Some(input.source.clone()),
@@ -1106,6 +1135,69 @@ mod tests {
         assert_eq!(
             mock.requests()[1]["params"]["note"]["deckName"],
             json!("Renamed")
+        );
+    }
+
+    #[test]
+    fn same_line_ignores_spaces_and_accepts_either_side_containing_the_other() {
+        assert!(same_line(
+            "昨日、友達と映画を見た。",
+            "昨日、友達と 映画を見た。"
+        ));
+        assert!(same_line("一行目\n二行目", "二行目"));
+        assert!(same_line("二行目", "一行目二行目"));
+        assert!(!same_line("別の字幕", "一行目"));
+        assert!(!same_line("", "一行目"));
+        assert!(!same_line("一行目", " "));
+    }
+
+    #[test]
+    fn a_card_from_an_mpv_subtitle_gets_the_sound_of_that_line() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+        let audio = crate::audio::AudioBuffer::shared(60);
+        let now = Instant::now();
+        // 4 s of silence, 2 s of speech (the subtitle), 6 s of louder talk that came after it.
+        let mut samples = vec![0_i16; 16_000 * 4];
+        samples.extend(vec![4000_i16; 16_000 * 2]);
+        samples.extend(vec![9000_i16; 16_000 * 6]);
+        audio.lock().expect("audio").push_at(&samples, now);
+        let clock = SubtitleClock::default();
+        let started = now - std::time::Duration::from_secs(8);
+        clock.begin("私は猫が好き", started);
+        clock.end(now - std::time::Duration::from_secs(6));
+        let state = state_with(Config {
+            anki_connect_url: mock.url.clone(),
+            ..Config::default()
+        })
+        .with_audio(audio)
+        .with_subtitles(clock);
+        let memory = HoverMemory::default();
+        remembered(&memory);
+
+        state.mine_from_hover(&memory, 0, 0).expect("note");
+
+        let data = mock.requests()[1]["params"]["note"]["audio"][0]["data"]
+            .as_str()
+            .expect("data")
+            .to_string();
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data)
+            .expect("base64");
+        let samples: Vec<i16> = bytes[44..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| i16::from_le_bytes(*pair))
+            .collect();
+        // The subtitle (2 s) plus 150 ms on each side; only that padding reaches the talk after it.
+        assert_eq!(samples.len(), 16_000 * 2 + 2 * 2_400);
+        assert_eq!(samples.iter().filter(|sample| **sample == 0).count(), 2_400);
+        assert_eq!(
+            samples.iter().filter(|sample| **sample == 4000).count(),
+            16_000 * 2
+        );
+        assert_eq!(
+            samples.iter().filter(|sample| **sample == 9000).count(),
+            2_400
         );
     }
 }

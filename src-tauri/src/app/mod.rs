@@ -27,7 +27,7 @@ use crate::normalizer::Normalizer;
 use crate::ocr::meiki::{DETECTION_MODEL, RECOGNITION_MODEL, RUNTIME_LIBRARY};
 use crate::ocr::MeikiEngine;
 use crate::sources::clipboard::ClipboardSource;
-use crate::sources::mpv::{MpvConnection, MpvSource};
+use crate::sources::mpv::{MpvConnection, MpvSource, SubtitleClock};
 use crate::sources::ocr::{OcrSource, RegionHandle, DEFAULT_POLL_INTERVAL as OCR_POLL_INTERVAL};
 use crate::sources::websocket::WebSocketSource;
 use crate::tokenizer::Tokenizer;
@@ -53,6 +53,14 @@ const OCR_DIR_VARIABLE: &str = "ANKI_MINING_OCR_DIR";
 
 /// Lets commands push text into the same pipeline the sources feed.
 struct TextSink(Sender<TextSourceEvent>);
+
+/// The sources that started, the websocket port, mpv's connection and the clock of its subtitles.
+type StartedSources = (
+    Vec<Box<dyn TextSource>>,
+    Option<u16>,
+    Option<MpvConnection>,
+    Option<SubtitleClock>,
+);
 
 /// Tells whether the mpv source is connected; `None` when the source is off.
 struct MpvStatus(Option<MpvConnection>);
@@ -321,7 +329,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let tokenizer = Arc::new(Tokenizer::new()?);
 
     let (sender, receiver) = mpsc::channel::<TextSourceEvent>();
-    let (mut sources, websocket_port, mpv_connection) =
+    let (mut sources, websocket_port, mpv_connection, subtitle_clock) =
         start_sources(&config, &sender, &mut warnings);
     let ocr_region = RegionHandle::default();
     let ocr_unavailable = match start_ocr(app, &sender, &ocr_region) {
@@ -372,7 +380,8 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             ocr_region,
         )
         .with_config_file(config_file)
-        .with_audio(audio),
+        .with_audio(audio)
+        .with_subtitles(subtitle_clock.unwrap_or_default()),
     );
     start_hover(app, &hover_control, &tokenizer);
     Ok(())
@@ -393,7 +402,7 @@ fn start_sources(
     config: &Config,
     sender: &Sender<TextSourceEvent>,
     warnings: &mut Vec<String>,
-) -> (Vec<Box<dyn TextSource>>, Option<u16>, Option<MpvConnection>) {
+) -> StartedSources {
     let mut running: Vec<Box<dyn TextSource>> = Vec::new();
     let mut websocket_port = None;
 
@@ -413,17 +422,19 @@ fn start_sources(
     }
 
     let mut mpv_connection = None;
+    let mut subtitle_clock = None;
     if !config.mpv_socket.is_empty() {
         let mut mpv = MpvSource::new(Path::new(&config.mpv_socket));
         match mpv.start(sender.clone()) {
             Ok(()) => {
                 mpv_connection = Some(mpv.connection());
+                subtitle_clock = Some(mpv.clock());
                 running.push(Box::new(mpv));
             }
             Err(error) => warnings.push(error.to_string()),
         }
     }
-    (running, websocket_port, mpv_connection)
+    (running, websocket_port, mpv_connection, subtitle_clock)
 }
 
 /// Starts the hover lookup when the OCR files are there; otherwise tells the user why not.

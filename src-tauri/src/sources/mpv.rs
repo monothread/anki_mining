@@ -8,9 +8,9 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -46,11 +46,51 @@ impl MpvConnection {
     }
 }
 
+/// The subtitle mpv is showing (or showed last) and when it appeared and went away, so the audio
+/// of exactly that line can be cut out of the recording.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubtitleSpan {
+    pub text: String,
+    pub started: Instant,
+    pub ended: Option<Instant>,
+}
+
+/// Shared between the mpv source (which writes it) and the card maker (which reads it).
+#[derive(Debug, Clone, Default)]
+pub struct SubtitleClock(Arc<Mutex<Option<SubtitleSpan>>>);
+
+impl SubtitleClock {
+    pub fn current(&self) -> Option<SubtitleSpan> {
+        self.0.lock().ok().and_then(|span| span.clone())
+    }
+
+    /// A subtitle with `text` appeared at `at`.
+    pub fn begin(&self, text: &str, at: Instant) {
+        if let Ok(mut span) = self.0.lock() {
+            *span = Some(SubtitleSpan {
+                text: text.to_string(),
+                started: at,
+                ended: None,
+            });
+        }
+    }
+
+    /// The subtitle went away at `at`.
+    pub fn end(&self, at: Instant) {
+        if let Ok(mut span) = self.0.lock() {
+            if let Some(current) = span.as_mut().filter(|current| current.ended.is_none()) {
+                current.ended = Some(at);
+            }
+        }
+    }
+}
+
 /// Follows the subtitles of the mpv listening on `socket`, reconnecting when mpv is restarted.
 pub struct MpvSource {
     socket: PathBuf,
     reconnect_interval: Duration,
     connection: MpvConnection,
+    clock: SubtitleClock,
     worker: Option<Worker>,
 }
 
@@ -64,8 +104,14 @@ impl MpvSource {
             socket: socket.to_path_buf(),
             reconnect_interval,
             connection: MpvConnection::default(),
+            clock: SubtitleClock::default(),
             worker: None,
         }
+    }
+
+    /// When the subtitles appeared and went away.
+    pub fn clock(&self) -> SubtitleClock {
+        self.clock.clone()
     }
 
     /// Handle that tells whether mpv is connected.
@@ -86,12 +132,13 @@ impl TextSource for MpvSource {
         let socket = self.socket.clone();
         let reconnect_interval = self.reconnect_interval;
         let connection = self.connection.clone();
+        let clock = self.clock.clone();
 
         let worker = Worker::spawn("mpv-source", move |stop| {
             while !is_stopped(&stop) {
                 if let Ok(stream) = UnixStream::connect(&socket) {
                     connection.set(true);
-                    let keep_going = follow(stream, &sink, &stop);
+                    let keep_going = follow(stream, &sink, &stop, &clock);
                     connection.set(false);
                     if !keep_going {
                         return;
@@ -131,7 +178,12 @@ fn sleep_unless_stopped(duration: Duration, stop: &AtomicBool) {
 
 /// Talks to one mpv connection until it closes or the source is stopped. Returns false when
 /// nobody is listening for the text any more, so the caller can stop for good.
-fn follow(mut stream: UnixStream, sink: &Sender<TextSourceEvent>, stop: &AtomicBool) -> bool {
+fn follow(
+    mut stream: UnixStream,
+    sink: &Sender<TextSourceEvent>,
+    stop: &AtomicBool,
+    clock: &SubtitleClock,
+) -> bool {
     if stream.set_read_timeout(Some(READ_TIMEOUT)).is_err() || send_observers(&mut stream).is_err()
     {
         return true;
@@ -151,6 +203,7 @@ fn follow(mut stream: UnixStream, sink: &Sender<TextSourceEvent>, stop: &AtomicB
         }
 
         for line in take_lines(&mut pending) {
+            note_subtitle_timing(&line, clock, Instant::now());
             if let Some(text) = handle_message(&line, &mut title) {
                 if sink.send(subtitle_event(text, title.as_deref())).is_err() {
                     return false;
@@ -184,6 +237,22 @@ fn take_lines(buffer: &mut Vec<u8>) -> Vec<String> {
         buffer.clear();
     }
     lines
+}
+
+/// Records when the subtitle in `line` (if it is one) appeared or went away.
+fn note_subtitle_timing(line: &str, clock: &SubtitleClock, at: Instant) {
+    let Ok(message) = serde_json::from_str::<Value>(line) else {
+        return;
+    };
+    if message.get("event").and_then(Value::as_str) != Some("property-change")
+        || message.get("name").and_then(Value::as_str) != Some(SUBTITLE_PROPERTY)
+    {
+        return;
+    }
+    match message.get("data").and_then(Value::as_str).map(str::trim) {
+        Some(text) if !text.is_empty() => clock.begin(text, at),
+        _ => clock.end(at),
+    }
 }
 
 /// Handles one message from mpv. Returns the new subtitle text when the message announces one;
@@ -625,5 +694,72 @@ mod tests {
                 app_name: Some("mpv".to_string())
             })
         );
+    }
+
+    #[test]
+    fn the_clock_follows_when_each_subtitle_appears_and_goes_away() {
+        let clock = SubtitleClock::default();
+        let start = Instant::now();
+        assert_eq!(clock.current(), None);
+
+        note_subtitle_timing(&property("sub-text", json!(" 一行目 ")), &clock, start);
+        let shown = clock.current().expect("span");
+        assert_eq!(
+            (shown.text.as_str(), shown.started, shown.ended),
+            ("一行目", start, None)
+        );
+
+        let gone = start + Duration::from_secs(2);
+        note_subtitle_timing(&property("sub-text", json!("")), &clock, gone);
+        assert_eq!(clock.current().expect("span").ended, Some(gone));
+
+        note_subtitle_timing(
+            &property("sub-text", Value::Null),
+            &clock,
+            gone + Duration::from_secs(1),
+        );
+        assert_eq!(clock.current().expect("span").ended, Some(gone));
+
+        let next = gone + Duration::from_secs(3);
+        note_subtitle_timing(&property("sub-text", json!("二行目")), &clock, next);
+        let second = clock.current().expect("span");
+        assert_eq!(
+            (second.text.as_str(), second.started, second.ended),
+            ("二行目", next, None)
+        );
+    }
+
+    #[test]
+    fn the_clock_ignores_other_properties_and_garbage() {
+        let clock = SubtitleClock::default();
+        let now = Instant::now();
+
+        note_subtitle_timing(&property("media-title", json!("題名")), &clock, now);
+        note_subtitle_timing("not json", &clock, now);
+        note_subtitle_timing(&json!({ "event": "idle" }).to_string(), &clock, now);
+        clock.end(now);
+
+        assert_eq!(clock.current(), None);
+    }
+
+    #[test]
+    fn the_source_fills_its_clock_from_what_mpv_sends() {
+        let directory = TempDir::new().expect("dir");
+        let socket = socket_in(&directory);
+        let listener = UnixListener::bind(&socket).expect("bind");
+        let mut source = MpvSource::with_reconnect_interval(&socket, FAST_RECONNECT);
+        let clock = source.clock();
+        let (sender, receiver) = mpsc::channel();
+        source.start(sender).expect("start");
+        let (mut stream, _) = accept(&listener, 2);
+
+        send(&mut stream, &property("sub-text", json!("字幕")));
+        receiver.recv_timeout(WAIT).expect("event");
+
+        assert_eq!(
+            clock.current().map(|span| span.text),
+            Some("字幕".to_string())
+        );
+        source.stop().expect("stop");
     }
 }

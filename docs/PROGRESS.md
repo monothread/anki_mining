@@ -12,7 +12,7 @@
 | Phase | Name | Status |
 |---|---|---|
 | 1 | MVP: clipboard/websocket → popup → Anki | Done (the Anki flow is tested against a mock AnkiConnect, never tried against a real Anki) |
-| 2 | Media on cards (audio + screenshot) — after Phase 3 | Not started |
+| 2 | Media on cards (audio + screenshot) | Done (WAV audio from the recorded output, JPEG screenshot) |
 | 3 | Screen OCR + hover lookup (core) | First version done and verified on the real desktop (YouTube, TV banner) and headless; P3-05 (preprocessing) open and optional |
 | 4 | mpv exact subtitles (no browser extension, user decision) | In progress (P4-02 done) |
 | 5 | Profiles and decks per source | Done |
