@@ -59,8 +59,8 @@ pub fn build_note(profile: &Profile, input: &CardInput) -> AnkiNote {
         fields,
         tags: vec![DEFAULT_TAG.to_string()],
         audio: [
-            media_list(input.audio.as_ref(), profile, MiningField::SentenceAudio),
             media_list(input.word_audio.as_ref(), profile, MiningField::WordAudio),
+            media_list(input.audio.as_ref(), profile, MiningField::SentenceAudio),
         ]
         .concat(),
         picture: media_list(input.picture.as_ref(), profile, MiningField::Picture),

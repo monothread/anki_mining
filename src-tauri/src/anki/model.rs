@@ -17,6 +17,7 @@ b { color: #d33; }
 const FRONT_TEMPLATE: &str = "\
 <div class=\"expression\">{{Expression}}</div>
 <div class=\"sentence\">{{Sentence}}</div>
+{{WordAudio}}
 {{SentenceAudio}}";
 
 const BACK_TEMPLATE: &str = "\
@@ -24,9 +25,27 @@ const BACK_TEMPLATE: &str = "\
 <hr id=\"answer\">
 <div class=\"reading\">{{Reading}}</div>
 <div class=\"meaning\">{{Meaning}}</div>
-{{WordAudio}}
 {{Picture}}
 <div class=\"meta\">{{Frequency}} {{Pitch}} {{Source}}</div>";
+
+/// The front and back of a card template of a note type that already exists, with the word audio
+/// played first and the sentence audio second on the front (where both sounds are heard before
+/// the answer). `None` when the front already has the word audio or has no sentence audio to put
+/// it before. A `{{WordAudio}}` an earlier version put on the back is removed, so the word is not
+/// played twice.
+pub fn with_word_audio_first(front: &str, back: &str) -> Option<(String, String)> {
+    const WORD: &str = "{{WordAudio}}";
+    const SENTENCE: &str = "{{SentenceAudio}}";
+    if front.contains(WORD) || !front.contains(SENTENCE) {
+        return None;
+    }
+    let front = front.replacen(SENTENCE, &format!("{WORD}\n{SENTENCE}"), 1);
+    let back = back
+        .replace(&format!("\n{WORD}"), "")
+        .replace(&format!("{WORD}\n"), "")
+        .replace(WORD, "");
+    Some((front, back))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,7 +123,7 @@ mod tests {
         assert_eq!(model.card_templates.len(), 1);
         let template = &model.card_templates[0];
         assert_eq!(template.name, "Recognition");
-        for field in ["Expression", "Sentence", "SentenceAudio"] {
+        for field in ["Expression", "Sentence", "WordAudio", "SentenceAudio"] {
             assert!(
                 template.front.contains(&format!("{{{{{field}}}}}")),
                 "front lacks {field}"
@@ -117,7 +136,6 @@ mod tests {
             "Frequency",
             "Pitch",
             "Source",
-            "WordAudio",
         ] {
             assert!(
                 template.back.contains(&format!("{{{{{field}}}}}")),
@@ -142,6 +160,58 @@ mod tests {
                 "Front": FRONT_TEMPLATE,
                 "Back": BACK_TEMPLATE
             }])
+        );
+    }
+
+    #[test]
+    fn the_default_front_plays_the_word_before_the_sentence() {
+        let front = &default_mining_model().card_templates[0].front;
+
+        let word = front.find("{{WordAudio}}").expect("word audio");
+        let sentence = front.find("{{SentenceAudio}}").expect("sentence audio");
+
+        assert!(word < sentence);
+        assert!(!default_mining_model().card_templates[0]
+            .back
+            .contains("{{WordAudio}}"));
+    }
+
+    #[test]
+    fn an_older_front_gets_the_word_audio_in_front_of_the_sentence_audio() {
+        let (front, back) = with_word_audio_first(
+            "{{Expression}}\n{{Sentence}}\n{{SentenceAudio}}",
+            "{{FrontSide}}\n{{Meaning}}",
+        )
+        .expect("updated");
+
+        assert_eq!(
+            front,
+            "{{Expression}}\n{{Sentence}}\n{{WordAudio}}\n{{SentenceAudio}}"
+        );
+        assert_eq!(back, "{{FrontSide}}\n{{Meaning}}");
+    }
+
+    #[test]
+    fn a_word_audio_an_earlier_version_put_on_the_back_is_moved_to_the_front() {
+        let (front, back) = with_word_audio_first(
+            "{{Sentence}}{{SentenceAudio}}",
+            "{{FrontSide}}\n{{Meaning}}\n{{WordAudio}}\n{{Picture}}",
+        )
+        .expect("updated");
+
+        assert_eq!(front, "{{Sentence}}{{WordAudio}}\n{{SentenceAudio}}");
+        assert_eq!(back, "{{FrontSide}}\n{{Meaning}}\n{{Picture}}");
+    }
+
+    #[test]
+    fn a_front_that_already_has_the_word_audio_or_no_sentence_audio_is_left_alone() {
+        assert_eq!(
+            with_word_audio_first("{{WordAudio}}{{SentenceAudio}}", "{{FrontSide}}"),
+            None
+        );
+        assert_eq!(
+            with_word_audio_first("{{Expression}}", "{{FrontSide}}"),
+            None
         );
     }
 }

@@ -2,6 +2,7 @@ pub mod model;
 #[cfg(test)]
 pub(crate) mod test_support;
 
+use std::collections::BTreeMap;
 use std::thread;
 use std::time::Duration;
 
@@ -12,7 +13,7 @@ use thiserror::Error;
 
 use crate::types::anki::AnkiNote;
 
-pub use model::{default_mining_model, CreateModel};
+pub use model::{default_mining_model, with_word_audio_first, CreateModel};
 
 const API_VERSION: u8 = 6;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -103,6 +104,30 @@ impl AnkiClient {
                 )?;
             }
         }
+        Ok(())
+    }
+
+    /// Puts the word audio before the sentence audio on the front of the card templates of the
+    /// note type, when an older version of the app made them without it.
+    pub fn ensure_audio_templates(&self, model_name: &str) -> Result<(), AnkiError> {
+        let templates: BTreeMap<String, BTreeMap<String, String>> =
+            self.call("modelTemplates", json!({ "modelName": model_name }))?;
+        let mut changed = serde_json::Map::new();
+        for (name, sides) in &templates {
+            let (Some(front), Some(back)) = (sides.get("Front"), sides.get("Back")) else {
+                continue;
+            };
+            if let Some((front, back)) = with_word_audio_first(front, back) {
+                changed.insert(name.clone(), json!({ "Front": front, "Back": back }));
+            }
+        }
+        if changed.is_empty() {
+            return Ok(());
+        }
+        self.call::<Value>(
+            "updateModelTemplates",
+            json!({ "model": { "name": model_name, "templates": changed } }),
+        )?;
         Ok(())
     }
 
@@ -595,5 +620,70 @@ mod tests {
         assert_eq!(plain, sample_note_json());
         assert!(audio.get("audio").is_some());
         assert!(audio.get("picture").is_none());
+    }
+
+    #[test]
+    fn audio_templates_of_an_older_note_type_are_updated_with_the_word_audio_first() {
+        let mock = MockAnki::start(vec![
+            ok(json!({
+                "Recognition": {
+                    "Front": "{{Sentence}}\n{{SentenceAudio}}",
+                    "Back": "{{FrontSide}}\n{{Meaning}}\n{{WordAudio}}"
+                }
+            })),
+            ok(Value::Null),
+        ]);
+
+        client(&mock)
+            .ensure_audio_templates("AnkiMining")
+            .expect("update");
+
+        assert_eq!(
+            mock.requests(),
+            vec![
+                json!({ "action": "modelTemplates", "version": 6, "params": { "modelName": "AnkiMining" } }),
+                json!({
+                    "action": "updateModelTemplates",
+                    "version": 6,
+                    "params": { "model": { "name": "AnkiMining", "templates": {
+                        "Recognition": {
+                            "Front": "{{Sentence}}\n{{WordAudio}}\n{{SentenceAudio}}",
+                            "Back": "{{FrontSide}}\n{{Meaning}}"
+                        }
+                    } } }
+                })
+            ]
+        );
+    }
+
+    #[test]
+    fn audio_templates_that_already_play_the_word_are_not_touched() {
+        let mock = MockAnki::start(vec![ok(json!({
+            "Recognition": { "Front": "{{WordAudio}}{{SentenceAudio}}", "Back": "{{FrontSide}}" },
+            "Other": { "Front": "{{Expression}}", "Back": "{{FrontSide}}" }
+        }))]);
+
+        client(&mock)
+            .ensure_audio_templates("AnkiMining")
+            .expect("check");
+
+        assert_eq!(mock.requests().len(), 1);
+    }
+
+    #[test]
+    fn a_failing_template_update_is_reported() {
+        let mock = MockAnki::start(vec![
+            ok(json!({ "Recognition": { "Front": "{{SentenceAudio}}", "Back": "" } })),
+            failure("model was not found: AnkiMining"),
+        ]);
+
+        let error = client(&mock)
+            .ensure_audio_templates("AnkiMining")
+            .expect_err("must fail");
+
+        assert_eq!(
+            error,
+            AnkiError::Api("model was not found: AnkiMining".to_string())
+        );
     }
 }

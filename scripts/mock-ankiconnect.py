@@ -35,6 +35,10 @@ class Handler(BaseHTTPRequestHandler):
             result = ["Expression", "Reading", "Meaning", "Sentence", "SentenceAudio", "Picture", "Frequency", "Pitch", "Source"]
         elif action == "modelFieldAdd":
             result = None
+        elif action == "modelTemplates":
+            result = {"Recognition": {"Front": "{{Expression}}\n{{Sentence}}\n{{SentenceAudio}}", "Back": "{{FrontSide}}\n{{Meaning}}"}}
+        elif action == "updateModelTemplates":
+            result = None
         elif action == "createModel":
             result = {"id": 1, "name": "AnkiMining"}
         elif action == "canAddNotes":
