@@ -56,6 +56,10 @@ fetch_verified "${ACCENTS_URL}" "${WORK}/accents.txt" "${ACCENTS_SHA256}"
 JSON="$(ls "${WORK}"/jmdict-eng-*.json | head -1)"
 gzip -dc "${FREQUENCY_GZ}" > "${WORK}/frequency-ja.tsv"
 
+# Tauri's build script insists that the files the bundle lists exist, even to compile the program
+# that makes them: an empty placeholder (replaced by the real file) satisfies it.
+[ -e "${TARGET}/jmdict.db" ] || : > "${TARGET}/jmdict.db"
+
 cd "${ROOT}/src-tauri"
 cargo run --release --example build_dictionary -- \
     "${JSON}" "${WORK}/accents.txt" "${WORK}/frequency-ja.tsv" "${TARGET}/jmdict.db"
