@@ -31,7 +31,7 @@ The product must work after installing a single app, with no browser extension o
 - [x] P2-02 — `AudioCapture` with circular buffer (PulseAudio/PipeWire) (dep: P1-01)
 - [x] P2-03 — Audio trimming and encoding (ffmpeg or native crate; decide via ADR)
 - [x] P2-04 — `CardBuilder` integration and `storeMediaFile` (dep: P2-01, P2-03)
-- [ ] P2-06 — Decide whether to offer speech recognition (e.g. Whisper) as an extra text source when no subtitles are on screen; record an ADR (not committed to the roadmap yet)
+- [x] P2-06 — Decide whether to offer speech recognition (e.g. Whisper) as an extra text source when no subtitles are on screen; decided not to offer it (ADR-017)
 - [x] P2-05 — Unit/e2e tests with exact payloads
 
 ## Phase 3 — Screen OCR with hover lookup (core, right after Phase 1)
