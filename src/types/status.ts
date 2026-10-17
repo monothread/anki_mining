@@ -19,3 +19,9 @@ export interface ImportStats {
     terms: number;
     skipped: number;
 }
+
+/** What a Yomitan dictionary import added. */
+export interface MetadataStats {
+    pitch: number;
+    frequency: number;
+}

@@ -14,8 +14,9 @@ function mount(settings: MiningSettings = SETTINGS) {
     document.body.replaceChildren(root);
     const onSave = vi.fn<(changed: MiningSettings) => void>();
     const onCancel = vi.fn<() => void>();
-    renderSettings(root, settings, { onSave, onCancel });
-    return { root, onSave, onCancel };
+    const onImportYomitan = vi.fn<(path: string) => void>();
+    renderSettings(root, settings, { onSave, onCancel, onImportYomitan });
+    return { root, onSave, onCancel, onImportYomitan };
 }
 
 function field(root: ParentNode, name: string): HTMLInputElement {
@@ -189,6 +190,27 @@ describe('renderSettings', () => {
 
         expect(onCancel).toHaveBeenCalledTimes(1);
         expect(onSave).not.toHaveBeenCalled();
+    });
+});
+
+describe('Yomitan import', () => {
+    it('sends the typed path, trimmed, when Import is clicked', () => {
+        const { root, onImportYomitan } = mount();
+        type(field(root, 'yomitanPath'), '  /data/pitch.zip ');
+
+        click(root, '.import-yomitan');
+
+        expect(onImportYomitan).toHaveBeenCalledTimes(1);
+        expect(onImportYomitan).toHaveBeenCalledWith('/data/pitch.zip');
+    });
+
+    it('does nothing when the path is empty', () => {
+        const { root, onImportYomitan } = mount();
+        type(field(root, 'yomitanPath'), '   ');
+
+        click(root, '.import-yomitan');
+
+        expect(onImportYomitan).not.toHaveBeenCalled();
     });
 });
 

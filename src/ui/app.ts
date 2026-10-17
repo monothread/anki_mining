@@ -248,6 +248,20 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
                     });
             },
             onCancel: closeSettings,
+            onImportYomitan: (path) => {
+                showMessage('Importing the dictionary...', 'info');
+                void backend
+                    .importYomitan(path)
+                    .then((stats) => {
+                        showMessage(
+                            `Imported ${String(stats.pitch)} pitch accents and ${String(stats.frequency)} frequencies`,
+                            'success',
+                        );
+                    })
+                    .catch((error: unknown) => {
+                        showMessage(String(error), 'error');
+                    });
+            },
         });
     };
 

@@ -797,6 +797,7 @@ mod tests {
                 meanings: vec!["meaning".to_string()],
                 parts_of_speech: vec!["n".to_string()],
                 frequency: None,
+                pitch: Vec::new(),
             },
             source: expression.to_string(),
             reasons: vec![],

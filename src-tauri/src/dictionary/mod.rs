@@ -1,5 +1,6 @@
 pub mod deinflect;
 mod import;
+mod metadata;
 
 use std::io::Read;
 use std::path::Path;
@@ -11,9 +12,10 @@ use thiserror::Error;
 use crate::types::entry::Entry;
 
 pub use import::ImportStats;
+pub use metadata::MetadataStats;
 
 /// Version of the dictionary that is bundled with the app; raise it when the bundled data changes.
-pub const BUNDLE_VERSION: u32 = 2;
+pub const BUNDLE_VERSION: u32 = 3;
 /// The `meta` key that tells where the entries came from (`bundled:<version>` or nothing).
 pub const SOURCE_KEY: &str = "source";
 
@@ -114,12 +116,37 @@ impl Dictionary {
 
     fn from_connection(connection: Connection) -> Result<Dictionary, DictionaryError> {
         import::create_schema(&connection)?;
+        metadata::create_schema(&connection)?;
         Ok(Dictionary { connection })
     }
 
     /// Replaces the dictionary contents with a `jmdict-simplified` JSON file.
     pub fn import_jmdict(&mut self, reader: impl Read) -> Result<ImportStats, DictionaryError> {
         import::import_jmdict(&mut self.connection, reader)
+    }
+
+    /// Replaces the pitch accents with a Kanjium `accents.txt` (`word<TAB>reading<TAB>positions`).
+    pub fn import_pitch_accents(
+        &mut self,
+        reader: impl std::io::BufRead,
+    ) -> Result<MetadataStats, DictionaryError> {
+        metadata::import_pitch_accents(&mut self.connection, reader)
+    }
+
+    /// Replaces the frequencies with lines of `word<TAB>reading<TAB>rank`.
+    pub fn import_frequencies(
+        &mut self,
+        reader: impl std::io::BufRead,
+    ) -> Result<MetadataStats, DictionaryError> {
+        metadata::import_frequencies(&mut self.connection, reader)
+    }
+
+    /// Adds the pitch accents and frequencies of a Yomitan dictionary zip.
+    pub fn import_yomitan(
+        &mut self,
+        reader: impl Read + std::io::Seek,
+    ) -> Result<MetadataStats, DictionaryError> {
+        metadata::import_yomitan(&mut self.connection, reader)
     }
 
     /// A value kept in the database next to the entries (e.g. where they came from).
@@ -186,7 +213,11 @@ impl Dictionary {
 
         let mut entries = Vec::new();
         for row in rows {
-            entries.push(row?.into_entry(term)?);
+            let mut entry = row?.into_entry(term)?;
+            entry.pitch = metadata::pitch_for(&self.connection, &entry.expression, &entry.reading)?;
+            entry.frequency =
+                metadata::frequency_for(&self.connection, &entry.expression, &entry.reading)?;
+            entries.push(entry);
         }
         Ok(entries)
     }
@@ -273,10 +304,10 @@ impl EntryRow {
             meanings: self.parse(&self.meanings, "meanings")?,
             parts_of_speech: self.parse(&self.pos, "pos")?,
             frequency: None,
+            pitch: Vec::new(),
         })
     }
 
-    /// The English meanings, preceded by the Portuguese ones when that language is chosen.
     fn parse<T: for<'de> Deserialize<'de>>(
         &self,
         json: &str,
@@ -386,6 +417,7 @@ mod tests {
                 meanings: vec!["cat; feline".to_string(), "shamisen".to_string()],
                 parts_of_speech: vec!["n".to_string()],
                 frequency: None,
+                pitch: Vec::new(),
             }]
         );
     }
@@ -400,6 +432,7 @@ mod tests {
                 meanings: vec!["cat; feline".to_string(), "shamisen".to_string()],
                 parts_of_speech: vec!["n".to_string()],
                 frequency: None,
+                pitch: Vec::new(),
             }]
         );
     }
@@ -423,6 +456,7 @@ mod tests {
                 meanings: vec!["to eat".to_string()],
                 parts_of_speech: vec!["v1".to_string(), "vt".to_string()],
                 frequency: None,
+                pitch: Vec::new(),
             }]
         );
     }
@@ -845,6 +879,7 @@ mod tests {
             meanings: vec![],
             parts_of_speech: vec!["vt".to_string(), "v1".to_string()],
             frequency: None,
+            pitch: Vec::new(),
         };
         let noun = Entry {
             parts_of_speech: vec!["n".to_string()],
@@ -1015,5 +1050,280 @@ mod tests {
         assert!(result.is_err());
         assert!(!target.exists());
         assert!(!directory.path().join("jmdict.db.part").exists());
+    }
+
+    fn yomitan_zip(files: &[(&str, serde_json::Value)]) -> std::io::Cursor<Vec<u8>> {
+        use std::io::Write;
+
+        let mut buffer = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut buffer);
+            for (name, content) in files {
+                writer
+                    .start_file(*name, zip::write::SimpleFileOptions::default())
+                    .expect("start");
+                writer
+                    .write_all(content.to_string().as_bytes())
+                    .expect("write");
+            }
+            writer.finish().expect("finish");
+        }
+        buffer.set_position(0);
+        buffer
+    }
+
+    #[test]
+    fn entries_have_no_pitch_or_frequency_until_they_are_imported() {
+        let entry = &imported().lookup("猫").expect("lookup")[0];
+
+        assert_eq!(entry.pitch, Vec::<u8>::new());
+        assert_eq!(entry.frequency, None);
+    }
+
+    #[test]
+    fn kanjium_pitch_accents_are_matched_by_word_and_reading() {
+        let mut dictionary = imported();
+
+        let stats = dictionary
+            .import_pitch_accents(
+                "猫\tねこ\t1\n食べる\tたべる\t2,0\n\n壊れた行\nぬけ\t\tx\n".as_bytes(),
+            )
+            .expect("import");
+
+        assert_eq!(
+            stats,
+            MetadataStats {
+                pitch: 2,
+                frequency: 0
+            }
+        );
+        assert_eq!(dictionary.lookup("猫").expect("lookup")[0].pitch, vec![1]);
+        assert_eq!(
+            dictionary.lookup("食べる").expect("lookup")[0].pitch,
+            vec![2, 0]
+        );
+        assert_eq!(
+            dictionary.lookup("紙").expect("lookup")[0].pitch,
+            Vec::<u8>::new()
+        );
+    }
+
+    #[test]
+    fn a_kanji_word_only_gets_the_pitch_of_its_own_reading() {
+        let mut dictionary = imported();
+        dictionary
+            .import_pitch_accents("神\tかみ\t1\n髪\tかみ\t2\n日\tひ\t1\n日\tにち\t0\n".as_bytes())
+            .expect("import");
+
+        assert_eq!(dictionary.lookup("髪").expect("lookup")[0].pitch, vec![2]);
+        assert_eq!(dictionary.lookup("日").expect("lookup")[0].pitch, vec![1]);
+    }
+
+    #[test]
+    fn katakana_and_hiragana_readings_are_the_same_reading() {
+        let mut dictionary = imported();
+        dictionary
+            .import_pitch_accents("猫\tネコ\t0\n".as_bytes())
+            .expect("import");
+
+        assert_eq!(dictionary.lookup("猫").expect("lookup")[0].pitch, vec![0]);
+        assert_eq!(
+            metadata::to_hiragana("ネコ・カタカナー"),
+            "ねこ・かたかなー"
+        );
+    }
+
+    #[test]
+    fn importing_pitch_accents_again_replaces_them() {
+        let mut dictionary = imported();
+        dictionary
+            .import_pitch_accents("猫\tねこ\t1\n".as_bytes())
+            .expect("first");
+
+        dictionary
+            .import_pitch_accents("猫\tねこ\t0\n".as_bytes())
+            .expect("second");
+
+        assert_eq!(dictionary.lookup("猫").expect("lookup")[0].pitch, vec![0]);
+    }
+
+    #[test]
+    fn inflected_words_carry_the_pitch_of_the_dictionary_form() {
+        let mut dictionary = imported();
+        dictionary
+            .import_pitch_accents("食べる\tたべる\t2\n".as_bytes())
+            .expect("import");
+
+        let results = dictionary.lookup_deinflected("食べました").expect("lookup");
+
+        assert_eq!(results[0].entry.pitch, vec![2]);
+    }
+
+    #[test]
+    fn frequencies_keep_the_lowest_rank_and_can_apply_to_any_reading() {
+        let mut dictionary = imported();
+
+        let stats = dictionary
+            .import_frequencies(
+                "猫\tねこ\t900\n猫\tねこ\t500\n食べる\t\t120\nx\ty\tnot-a-number\n\t\t5\n"
+                    .as_bytes(),
+            )
+            .expect("import");
+
+        assert_eq!(
+            stats,
+            MetadataStats {
+                pitch: 0,
+                frequency: 3
+            }
+        );
+        assert_eq!(
+            dictionary.lookup("猫").expect("lookup")[0].frequency,
+            Some(500)
+        );
+        assert_eq!(
+            dictionary.lookup("食べる").expect("lookup")[0].frequency,
+            Some(120)
+        );
+        assert_eq!(dictionary.lookup("紙").expect("lookup")[0].frequency, None);
+    }
+
+    #[test]
+    fn a_frequency_for_another_reading_does_not_apply() {
+        let mut dictionary = imported();
+        dictionary
+            .import_frequencies("日\tにち\t10\n日\tひ\t99\n".as_bytes())
+            .expect("import");
+
+        assert_eq!(
+            dictionary.lookup("日").expect("lookup")[0].frequency,
+            Some(99)
+        );
+    }
+
+    #[test]
+    fn replacing_jmdict_keeps_pitch_and_frequency() {
+        let mut dictionary = imported();
+        dictionary
+            .import_pitch_accents("猫\tねこ\t1\n".as_bytes())
+            .expect("pitch");
+        dictionary
+            .import_frequencies("猫\tねこ\t7\n".as_bytes())
+            .expect("frequency");
+
+        dictionary
+            .import_jmdict(fixture().as_bytes())
+            .expect("import");
+
+        let entry = &dictionary.lookup("猫").expect("lookup")[0];
+        assert_eq!((entry.pitch.clone(), entry.frequency), (vec![1], Some(7)));
+    }
+
+    #[test]
+    fn a_yomitan_dictionary_gives_frequencies_and_pitch_in_every_shape() {
+        let mut dictionary = imported();
+        let archive = yomitan_zip(&[
+            (
+                "index.json",
+                json!({ "title": "x", "revision": "1", "format": 3 }),
+            ),
+            (
+                "term_bank_1.json",
+                json!([["猫", "ねこ", "", "", 0, ["cat"], 1, ""]]),
+            ),
+            (
+                "term_meta_bank_1.json",
+                json!([
+                    ["猫", "freq", 1500],
+                    ["食べる", "freq", { "value": 300, "displayValue": "300ㅤ" }],
+                    ["紙", "freq", { "reading": "かみ", "frequency": { "value": 42, "displayValue": "42" } }],
+                    ["髪", "freq", { "reading": "かみ", "frequency": 77 }],
+                    ["猫", "pitch", { "reading": "ねこ", "pitches": [{ "position": 1 }, { "position": 0, "nasal": 1 }] }],
+                    ["神", "pitch", { "reading": "かみ", "pitches": [] }],
+                    ["日", "mode", {}],
+                    ["bad"]
+                ]),
+            ),
+            ("dir/term_meta_bank_2.json", json!([["日", "freq", 5]])),
+        ]);
+
+        let stats = dictionary.import_yomitan(archive).expect("import");
+
+        assert_eq!(
+            stats,
+            MetadataStats {
+                pitch: 1,
+                frequency: 5
+            }
+        );
+        let cat = &dictionary.lookup("猫").expect("lookup")[0];
+        assert_eq!((cat.frequency, cat.pitch.clone()), (Some(1500), vec![1, 0]));
+        assert_eq!(
+            dictionary.lookup("食べる").expect("lookup")[0].frequency,
+            Some(300)
+        );
+        assert_eq!(
+            dictionary.lookup("紙").expect("lookup")[0].frequency,
+            Some(42)
+        );
+        assert_eq!(
+            dictionary.lookup("髪").expect("lookup")[0].frequency,
+            Some(77)
+        );
+        assert_eq!(
+            dictionary.lookup("日").expect("lookup")[0].frequency,
+            Some(5)
+        );
+        assert_eq!(
+            dictionary.lookup("神").expect("lookup")[0].pitch,
+            Vec::<u8>::new()
+        );
+    }
+
+    #[test]
+    fn a_yomitan_import_keeps_the_lowest_frequency_rank() {
+        let mut dictionary = imported();
+        dictionary
+            .import_frequencies("猫\t\t100\n".as_bytes())
+            .expect("first");
+
+        dictionary
+            .import_yomitan(yomitan_zip(&[(
+                "term_meta_bank_1.json",
+                json!([["猫", "freq", 900]]),
+            )]))
+            .expect("import");
+
+        assert_eq!(
+            dictionary.lookup("猫").expect("lookup")[0].frequency,
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_zip_or_has_broken_json_is_an_error() {
+        let mut dictionary = imported();
+
+        let not_zip = dictionary.import_yomitan(std::io::Cursor::new(b"nope".to_vec()));
+        let bad_json = {
+            let mut buffer = std::io::Cursor::new(Vec::new());
+            {
+                use std::io::Write;
+                let mut writer = zip::ZipWriter::new(&mut buffer);
+                writer
+                    .start_file(
+                        "term_meta_bank_1.json",
+                        zip::write::SimpleFileOptions::default(),
+                    )
+                    .expect("start");
+                writer.write_all(b"[not json").expect("write");
+                writer.finish().expect("finish");
+            }
+            buffer.set_position(0);
+            dictionary.import_yomitan(buffer)
+        };
+
+        assert!(not_zip.is_err());
+        assert!(matches!(bad_json, Err(DictionaryError::InvalidJson(_))));
     }
 }

@@ -69,7 +69,7 @@ The product must work after installing a single app, with no browser extension o
 - [x] P5-04 — E2E tests
 
 ## Phase 6 — Polish
-- [ ] P6-01 — Pitch accent and frequency (Yomitan-format dictionaries)
-- [ ] P6-02 — Yomitan dictionary importer
+- [x] P6-01 — Pitch accent and frequency (Yomitan-format dictionaries)
+- [x] P6-02 — Yomitan dictionary importer
 - [ ] P6-03 — Wayland backends (`ScreenCapture` portal/PipeWire, `GlobalHotkey`, `OverlayWindow` layer-shell)
 - [ ] P6-04 — Packaging: AppImage is built from the start via `scripts/dev.sh appimage`; here add Flatpak, release automation and installation docs

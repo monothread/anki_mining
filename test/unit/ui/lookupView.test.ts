@@ -137,3 +137,56 @@ describe('renderLookup', () => {
         expect(container.querySelector('button')).toBeNull();
     });
 });
+
+describe('renderLookup pitch accent and frequency', () => {
+    const withMetadata = (pitch: number[], frequency: number | null): ScanResult => {
+        return {
+            ...CAT_RESULT,
+            entries: [{ ...CAT_ENTRY, entry: { ...CAT_ENTRY.entry, pitch, frequency } }],
+        };
+    };
+
+    it('shows the plain reading when the pitch is unknown', () => {
+        const { container } = render([withMetadata([], null)]);
+
+        expect(container.querySelector('.reading')?.textContent).toBe('ねこ');
+        expect(container.querySelector('.mora')).toBeNull();
+        expect(container.querySelector('.pitch')).toBeNull();
+        expect(container.querySelector('.frequency')).toBeNull();
+    });
+
+    it('marks the high moras of the first accent and shows every accent', () => {
+        const { container } = render([withMetadata([1, 0], null)]);
+
+        const moras = [...container.querySelectorAll('.mora')];
+        expect(moras.map((mora) => {
+            return mora.textContent;
+        })).toEqual(['ね', 'こ']);
+        expect(moras.map((mora) => {
+            return mora.classList.contains('high');
+        })).toEqual([true, false]);
+        expect(moras.map((mora) => {
+            return mora.classList.contains('drop');
+        })).toEqual([true, false]);
+        expect(container.querySelector('.pitch')?.textContent).toBe('[1], [0]');
+    });
+
+    it('does not mark a drop for a flat word', () => {
+        const { container } = render([withMetadata([0], null)]);
+
+        const moras = [...container.querySelectorAll('.mora')];
+        expect(moras.map((mora) => {
+            return mora.classList.contains('high');
+        })).toEqual([false, true]);
+        expect(container.querySelector('.drop')).toBeNull();
+    });
+
+    it('shows the frequency rank', () => {
+        const { container } = render([withMetadata([], 1520)]);
+
+        const rank = container.querySelector('.frequency');
+        expect(rank?.textContent).toBe('#1520');
+        expect(rank?.getAttribute('title')).toBe('Frequency rank (lower is more common)');
+    });
+});
+

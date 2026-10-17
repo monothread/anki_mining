@@ -61,7 +61,10 @@ chmod +x AnkiMining_0.1.0_amd64.AppImage
 ```
 
 The dictionary is part of the app: nothing has to be downloaded or imported. It has the 218,000 JMdict entries
-with English meanings.
+with English meanings, the pitch accent of about 124,000 words (shown as a line over the reading and as `[0]`/`[1]`...
+in the popup and in the `Pitch` field of the card) and a frequency rank for the 18,000 most used words (`#337`, also in the
+`Frequency` field). You can add more pitch accent or frequency data in **Settings → Dictionary** from any Yomitan
+dictionary `.zip` that has `term_meta_bank` files (the lowest frequency rank of a word is kept).
 
 ## Develop
 
@@ -106,6 +109,8 @@ screenshot, mouse move). More in [docs/PROGRESS.md](docs/PROGRESS.md).
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) 1.31 | Runs the OCR models | MIT |
 | [Lindera](https://github.com/lindera/lindera) with UniDic | Japanese tokenizer | MIT; UniDic has its own license |
 | [JMdict](https://www.edrdg.org/jmdict/j_jmdict.html) via [jmdict-simplified](https://github.com/scriptin/jmdict-simplified) | Dictionary, bundled in the app (English meanings) | CC BY-SA 4.0 |
+| [Kanjium](https://github.com/mifunetoshiro/kanjium) `accents.txt` (pitch accents, by Uros O.) | Pitch accent, bundled in the app | CC BY-SA 4.0 |
+| [Tatoeba](https://tatoeba.org) Japanese sentences | Word frequency ranks counted from them (`data/frequency-ja.tsv.gz`) | CC BY 2.0 FR |
 | [Tauri](https://tauri.app) | App framework | MIT / Apache-2.0 |
 
 The models and the ONNX Runtime library are not stored in this repository; `scripts/fetch-ocr-models.sh`

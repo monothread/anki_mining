@@ -5,6 +5,8 @@ import type { DuplicatePolicy, MiningSettings } from '../types/settings';
 export interface SettingsHandlers {
     onSave: (settings: MiningSettings) => void;
     onCancel: () => void;
+    /** Called with the path of a Yomitan dictionary zip to take pitch accents and frequencies from. */
+    onImportYomitan: (path: string) => void;
 }
 
 export const MIN_AUDIO_SECONDS = 1;
@@ -218,6 +220,24 @@ export function renderSettings(root: HTMLElement, settings: MiningSettings, hand
         labelled('Default profile', defaultProfileSelect(settings)),
     );
     root.append(general);
+
+    const dictionary = element('fieldset', 'dictionary');
+    const yomitanPath = textInput('yomitanPath', '', '/path/to/dictionary.zip');
+    const importButton = element('button', 'action import-yomitan', 'Import');
+    importButton.type = 'button';
+    importButton.addEventListener('click', () => {
+        const path = yomitanPath.value.trim();
+        if (path !== '') {
+            handlers.onImportYomitan(path);
+        }
+    });
+    const importRow = element('div', 'import-row');
+    importRow.append(yomitanPath, importButton);
+    dictionary.append(
+        element('legend', undefined, 'Dictionary'),
+        labelled('Pitch accent or frequency dictionary (Yomitan .zip)', importRow, 'Adds its pitch accents and frequencies to the bundled dictionary'),
+    );
+    root.append(dictionary);
 
     const application = element('fieldset', 'application');
     application.append(

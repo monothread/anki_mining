@@ -817,4 +817,43 @@ describe('createApp window controls', () => {
             expect(setup?.hidden).toBe(false);
         });
     });
+
+    it('imports a Yomitan dictionary from the settings and reports what it added', async () => {
+        const { root, fake } = await mount();
+        root.querySelector<HTMLButtonElement>('#open-settings')?.click();
+        await vi.waitFor(() => {
+            expect(root.querySelector('.import-yomitan')).not.toBeNull();
+        });
+        const input = root.querySelector<HTMLInputElement>('input[name="yomitanPath"]');
+        if (input) {
+            input.value = '/data/pitch.zip';
+        }
+
+        root.querySelector<HTMLButtonElement>('.import-yomitan')?.click();
+        await vi.waitFor(() => {
+            expect(text(root, '#message')).toBe('Imported 120 pitch accents and 300 frequencies');
+        });
+
+        expect(fake.backend.importYomitan).toHaveBeenCalledWith('/data/pitch.zip');
+        expect(root.querySelector<HTMLElement>('#settings')?.hidden).toBe(false);
+    });
+
+    it('shows why a Yomitan import failed', async () => {
+        const { root } = await mount((created) => {
+            vi.mocked(created.backend.importYomitan).mockRejectedValue('cannot read `/x.zip`: not found');
+        });
+        root.querySelector<HTMLButtonElement>('#open-settings')?.click();
+        await vi.waitFor(() => {
+            expect(root.querySelector('.import-yomitan')).not.toBeNull();
+        });
+        const input = root.querySelector<HTMLInputElement>('input[name="yomitanPath"]');
+        if (input) {
+            input.value = '/x.zip';
+        }
+
+        root.querySelector<HTMLButtonElement>('.import-yomitan')?.click();
+        await vi.waitFor(() => {
+            expect(text(root, '#message')).toBe('cannot read `/x.zip`: not found');
+        });
+    });
 });

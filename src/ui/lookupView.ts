@@ -1,4 +1,5 @@
 import type { DeinflectedEntry, ScanResult } from '../types/scan';
+import { pitchLabel, pitchPattern, splitMoras } from './pitch';
 
 export interface LookupViewHandlers {
     /** When absent, entries are shown without an "Add to Anki" button. */
@@ -39,7 +40,15 @@ function createEntryElement(
     const element = createElement('article', 'entry');
     const heading = createElement('div', 'entry-heading');
     heading.append(createElement('span', 'expression', found.entry.expression));
-    heading.append(createElement('span', 'reading', found.entry.reading));
+    heading.append(createReadingElement(found.entry.reading, found.entry.pitch));
+    if (found.entry.pitch.length > 0) {
+        heading.append(createElement('span', 'pitch', pitchLabel(found.entry.pitch)));
+    }
+    if (found.entry.frequency !== null) {
+        const rank = createElement('span', 'frequency', `#${String(found.entry.frequency)}`);
+        rank.title = 'Frequency rank (lower is more common)';
+        heading.append(rank);
+    }
     if (found.reasons.length > 0) {
         heading.append(createElement('span', 'reasons', formatReasons([...found.reasons].reverse())));
     }
@@ -63,6 +72,26 @@ function createEntryElement(
         });
         element.append(button);
     }
+    return element;
+}
+
+/** The reading; with a known pitch accent every mora is marked high or low (the first accent is drawn). */
+function createReadingElement(reading: string, pitch: readonly number[]): HTMLElement {
+    const element = createElement('span', 'reading');
+    const first = pitch[0];
+    if (first === undefined) {
+        element.textContent = reading;
+        return element;
+    }
+    const moras = splitMoras(reading);
+    const pattern = pitchPattern(moras.length, first);
+    moras.forEach((mora, index) => {
+        const part = createElement('span', pattern[index] === true ? 'mora high' : 'mora', mora);
+        if (pattern[index] === true && pattern[index + 1] === false) {
+            part.classList.add('drop');
+        }
+        element.append(part);
+    });
     return element;
 }
 

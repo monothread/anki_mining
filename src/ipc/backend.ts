@@ -8,7 +8,7 @@ import type { Region } from '../types/region';
 import type { ScanResult } from '../types/scan';
 import type { Sentence } from '../types/sentence';
 import type { MiningSettings } from '../types/settings';
-import type { ImportStats, Status } from '../types/status';
+import type { ImportStats, MetadataStats, Status } from '../types/status';
 
 /** Removes the event subscription it was returned for. */
 export type Unsubscribe = () => void;
@@ -29,6 +29,8 @@ export interface Backend {
     scanAt: (sentence: string, start: number) => Promise<ScanResult[]>;
     mine: (input: CardInput, profileId: string | null) => Promise<number>;
     importDictionary: (path: string) => Promise<ImportStats>;
+    /** Adds the pitch accents and frequencies of a Yomitan dictionary zip. */
+    importYomitan: (path: string) => Promise<MetadataStats>;
     submitText: (text: string) => Promise<void>;
     /** Opens the full-screen selector; the result arrives through `onOcrRegion`. */
     selectOcrRegion: () => Promise<void>;
@@ -80,6 +82,9 @@ export const tauriBackend: Backend = {
     },
     importDictionary: async (path) => {
         return invoke<ImportStats>('import_dictionary', { path });
+    },
+    importYomitan: async (path) => {
+        return invoke<MetadataStats>('import_yomitan', { path });
     },
     submitText: async (text) => {
         await invoke('submit_text', { text });

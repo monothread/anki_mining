@@ -34,6 +34,7 @@ describe('buildCardInput', () => {
                 meanings: ['to eat'],
                 partsOfSpeech: ['v1', 'vt'],
                 frequency: 120,
+                pitch: [],
             },
             sentence: '昨日食べました',
             highlight: [2, 7],

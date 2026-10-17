@@ -60,6 +60,15 @@ pub fn build_note(profile: &Profile, input: &CardInput) -> AnkiNote {
     }
 }
 
+/// The pitch accents as `[1], [0]` (the number is where the pitch drops; `0` is flat).
+fn pitch_label(positions: &[u8]) -> String {
+    positions
+        .iter()
+        .map(|position| format!("[{position}]"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn field_value(field: MiningField, input: &CardInput) -> String {
     match field {
         MiningField::Expression => escape_html(&input.entry.expression),
@@ -72,7 +81,8 @@ fn field_value(field: MiningField, input: &CardInput) -> String {
             .map(|rank| rank.to_string())
             .unwrap_or_default(),
         MiningField::Source => escape_html(&input.source),
-        MiningField::SentenceAudio | MiningField::Picture | MiningField::Pitch => String::new(),
+        MiningField::Pitch => pitch_label(&input.entry.pitch),
+        MiningField::SentenceAudio | MiningField::Picture => String::new(),
     }
 }
 
@@ -147,6 +157,7 @@ mod tests {
             meanings: vec!["cat; feline".to_string(), "shamisen".to_string()],
             parts_of_speech: vec!["n".to_string()],
             frequency: Some(1520),
+            pitch: Vec::new(),
         }
     }
 
@@ -350,6 +361,7 @@ mod tests {
         let unknown = CardInput {
             entry: Entry {
                 frequency: None,
+                pitch: Vec::new(),
                 ..entry()
             },
             ..input()
@@ -437,5 +449,29 @@ mod tests {
             serde_json::json!({ "filename": "clip.mp3", "data": "AAEC" })
         );
         assert_eq!(json["entry"]["partsOfSpeech"], serde_json::json!(["n"]));
+    }
+
+    #[test]
+    fn the_pitch_field_lists_every_accent_of_the_word() {
+        let with_pitch = CardInput {
+            entry: Entry {
+                pitch: vec![1, 0],
+                ..entry()
+            },
+            ..input()
+        };
+
+        let note = build_note(&default_profile(), &with_pitch);
+
+        assert_eq!(note.fields.get("Pitch"), Some(&"[1], [0]".to_string()));
+    }
+
+    #[test]
+    fn the_pitch_field_is_empty_when_the_pitch_is_unknown() {
+        let note = build_note(&default_profile(), &input());
+
+        assert_eq!(note.fields.get("Pitch"), Some(&String::new()));
+        assert_eq!(pitch_label(&[]), "");
+        assert_eq!(pitch_label(&[3]), "[3]");
     }
 }

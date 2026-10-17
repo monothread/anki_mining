@@ -109,3 +109,21 @@ body {
 .empty {
     color: var(--muted);
 }
+
+.mora.high {
+    border-top: 2px solid var(--accent, #6cb6ff);
+}
+
+.mora.drop {
+    border-right: 2px solid var(--accent, #6cb6ff);
+}
+
+.pitch,
+.frequency {
+    margin-left: 6px;
+    padding: 0 5px;
+    font-size: 11px;
+    color: var(--muted, #9aa0b4);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+}

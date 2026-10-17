@@ -13,6 +13,7 @@ use crate::audio::{audio_file, SharedAudio};
 use crate::capture::Region;
 use crate::cards::{build_note, CardInput, MediaFile};
 use crate::config::{Config, ConfigFile, DuplicatePolicy, MiningSettings, DEFAULT_MODEL_NAME};
+use crate::dictionary::MetadataStats;
 use crate::dictionary::{Dictionary, DictionaryError, ImportStats, ScanResult};
 use crate::hover::{card_input, HoverMemory};
 use crate::media::screenshot_file;
@@ -269,6 +270,17 @@ impl AppState {
             .import_jmdict(BufReader::new(file))?)
     }
 
+    /// Adds the pitch accents and frequencies of a Yomitan dictionary (a `.zip` file).
+    pub fn import_yomitan(&self, path: &Path) -> Result<MetadataStats, AppError> {
+        let file = File::open(path).map_err(|error| AppError::Io {
+            path: path.display().to_string(),
+            reason: error.to_string(),
+        })?;
+        Ok(self
+            .lock_dictionary()?
+            .import_yomitan(BufReader::new(file))?)
+    }
+
     fn lock_dictionary(&self) -> Result<std::sync::MutexGuard<'_, Dictionary>, AppError> {
         self.dictionary.lock().map_err(|_| AppError::Poisoned)
     }
@@ -330,6 +342,7 @@ mod tests {
                 meanings: vec!["cat".to_string()],
                 parts_of_speech: vec!["n".to_string()],
                 frequency: None,
+                pitch: Vec::new(),
             },
             sentence: "猫が好き".to_string(),
             highlight: Some((0, 1)),
@@ -760,6 +773,7 @@ mod tests {
                         meanings: vec!["cat".to_string()],
                         parts_of_speech: vec!["n".to_string()],
                         frequency: None,
+                        pitch: Vec::new(),
                     },
                     source: "猫".to_string(),
                     reasons: vec![],
@@ -1199,5 +1213,75 @@ mod tests {
             samples.iter().filter(|sample| **sample == 9000).count(),
             2_400
         );
+    }
+
+    fn yomitan_file(directory: &tempfile::TempDir) -> std::path::PathBuf {
+        use std::io::Write;
+
+        let path = directory.path().join("pitch.zip");
+        let mut writer = zip::ZipWriter::new(File::create(&path).expect("file"));
+        writer
+            .start_file(
+                "term_meta_bank_1.json",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .expect("start");
+        writer
+            .write_all(
+                json!([
+                    ["猫", "freq", 25],
+                    ["猫", "pitch", { "reading": "ねこ", "pitches": [{ "position": 1 }] }]
+                ])
+                .to_string()
+                .as_bytes(),
+            )
+            .expect("write");
+        writer.finish().expect("finish");
+        path
+    }
+
+    #[test]
+    fn a_yomitan_dictionary_adds_pitch_and_frequency_to_the_lookups() {
+        let state = state_with(Config::default());
+        let directory = tempfile::tempdir().expect("dir");
+
+        let stats = state
+            .import_yomitan(&yomitan_file(&directory))
+            .expect("import");
+
+        assert_eq!(
+            stats,
+            MetadataStats {
+                pitch: 1,
+                frequency: 1
+            }
+        );
+        let entry = &state.scan_at("猫", 0).expect("scan")[0].entries[0].entry;
+        assert_eq!((entry.pitch.clone(), entry.frequency), (vec![1], Some(25)));
+    }
+
+    #[test]
+    fn a_missing_yomitan_file_is_reported_with_its_path() {
+        let state = state_with(Config::default());
+
+        let error = state
+            .import_yomitan(Path::new("/definitely/missing/pitch.zip"))
+            .expect_err("must fail");
+
+        assert!(matches!(error, AppError::Io { .. }));
+        assert!(
+            error.to_string().contains("/definitely/missing/pitch.zip"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_zip_is_refused() {
+        let state = state_with(Config::default());
+        let directory = tempfile::tempdir().expect("dir");
+        let path = directory.path().join("nope.zip");
+        std::fs::write(&path, "not a zip").expect("write");
+
+        assert!(state.import_yomitan(&path).is_err());
     }
 }

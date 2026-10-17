@@ -21,7 +21,7 @@ use crate::audio::{AudioBuffer, AudioRecorder, BUFFER_SECONDS};
 use crate::capture::{Region, X11Capture};
 use crate::cards::CardInput;
 use crate::config::{Config, ConfigFile, MiningSettings};
-use crate::dictionary::{install_bundled, Dictionary, ImportStats, ScanResult};
+use crate::dictionary::{install_bundled, Dictionary, ImportStats, MetadataStats, ScanResult};
 use crate::hover::trigger::TriggerMode;
 use crate::hover::{card_input, HoverMemory};
 use crate::normalizer::Normalizer;
@@ -239,6 +239,13 @@ fn import_dictionary(state: State<'_, AppState>, path: String) -> Result<ImportS
 }
 
 #[tauri::command]
+fn import_yomitan(state: State<'_, AppState>, path: String) -> Result<MetadataStats, String> {
+    state
+        .import_yomitan(Path::new(&path))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn submit_text(sink: State<'_, TextSink>, text: String) -> Result<(), String> {
     let event = TextSourceEvent {
         text,
@@ -332,6 +339,7 @@ pub fn run() -> tauri::Result<()> {
             scan_at,
             mine,
             import_dictionary,
+            import_yomitan,
             submit_text,
             get_hover,
             mine_hover,
@@ -665,6 +673,7 @@ mod tests {
                         meanings: vec!["cat".to_string()],
                         parts_of_speech: vec!["n".to_string()],
                         frequency: None,
+                        pitch: Vec::new(),
                     },
                     source: "猫".to_string(),
                     reasons: vec![],

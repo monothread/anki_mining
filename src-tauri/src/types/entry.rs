@@ -9,6 +9,10 @@ pub struct Entry {
     pub parts_of_speech: Vec<String>,
     /// Frequency rank (lower is more common); `None` when unknown.
     pub frequency: Option<u32>,
+    /// Downstep positions of the pitch accent (`0` is flat, `1` is a drop after the first mora);
+    /// empty when unknown. A word can have several accents.
+    #[serde(default)]
+    pub pitch: Vec<u8>,
 }
 
 #[cfg(test)]
@@ -24,6 +28,7 @@ mod tests {
             meanings: vec!["cat".to_string(), "feline".to_string()],
             parts_of_speech: vec!["noun".to_string()],
             frequency: Some(1520),
+            pitch: vec![1, 0],
         }
     }
 
@@ -36,7 +41,8 @@ mod tests {
                 "reading": "ねこ",
                 "meanings": ["cat", "feline"],
                 "partsOfSpeech": ["noun"],
-                "frequency": 1520
+                "frequency": 1520,
+                "pitch": [1, 0]
             })
         );
     }
@@ -45,12 +51,27 @@ mod tests {
     fn serializes_an_unknown_frequency_as_null() {
         let entry = Entry {
             frequency: None,
+            pitch: Vec::new(),
             ..sample_entry()
         };
 
         let value = serde_json::to_value(entry).expect("entry must serialize");
 
         assert_eq!(value["frequency"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn a_payload_without_pitch_has_no_pitch() {
+        let entry: Entry = serde_json::from_value(json!({
+            "expression": "猫",
+            "reading": "ねこ",
+            "meanings": ["cat"],
+            "partsOfSpeech": ["n"],
+            "frequency": null
+        }))
+        .expect("entry must parse");
+
+        assert_eq!(entry.pitch, Vec::<u8>::new());
     }
 
     #[test]

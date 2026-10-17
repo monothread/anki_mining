@@ -73,6 +73,7 @@ export function createFakeBackend(): FakeBackend {
         importDictionary: vi
             .fn<Backend['importDictionary']>()
             .mockResolvedValue({ entries: 218_898, terms: 499_430, skipped: 0 }),
+        importYomitan: vi.fn<Backend['importYomitan']>().mockResolvedValue({ pitch: 120, frequency: 300 }),
         submitText: vi.fn<Backend['submitText']>().mockResolvedValue(undefined),
         selectOcrRegion: vi.fn<Backend['selectOcrRegion']>().mockResolvedValue(undefined),
         clearOcrRegion: vi.fn<Backend['clearOcrRegion']>().mockResolvedValue(undefined),
