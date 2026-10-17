@@ -2,6 +2,7 @@
 
 pub mod hover;
 pub mod pipeline;
+pub mod selftest;
 pub mod state;
 mod tray;
 
@@ -389,6 +390,10 @@ fn close_selector(app: &AppHandle) {
 }
 
 pub fn run() -> tauri::Result<()> {
+    let arguments: Vec<String> = std::env::args().collect();
+    if let Some(code) = selftest::run_if_requested(&arguments) {
+        std::process::exit(code);
+    }
     tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()

@@ -1,0 +1,13 @@
+{
+    "bundle": {
+        "targets": [
+            "appimage"
+        ],
+        "resources": {
+            "resources/ocr/*.onnx": "ocr/",
+            "resources/ocr/*.so": "ocr/",
+            "resources/dictionary/*.db": "dictionary/",
+            "resources/tts/": "tts/"
+        }
+    }
+}

@@ -1,0 +1,13 @@
+{
+    "bundle": {
+        "targets": [
+            "nsis"
+        ],
+        "resources": {
+            "resources/ocr/*.onnx": "ocr/",
+            "resources/ocr/*.dll": "ocr/",
+            "resources/dictionary/*.db": "dictionary/",
+            "resources/tts-windows/": "tts/"
+        }
+    }
+}

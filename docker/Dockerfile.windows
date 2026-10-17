@@ -13,8 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     XWIN_CACHE_DIR=/cache/xwin \
     CARGO_TARGET_DIR=/cache/target-win \
     WINEPREFIX=/cache/wine \
-    WINEDEBUG=-all \
-    WINEARCH=win64
+    WINEDEBUG=-all
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
@@ -51,5 +50,16 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
            --target x86_64-pc-windows-msvc \
     && CARGO_HOME=/usr/local/cargo cargo install --locked cargo-xwin \
     && chmod -R a+rX /usr/local/rustup /usr/local/cargo
+
+# Wine 11 from WineHQ: the Wine of Ubuntu 22.04 (6.0) lacks DLLs that current Rust programs need
+# (bcryptprimitives.dll), so it cannot run the tests or the app.
+RUN dpkg --add-architecture i386 \
+    && mkdir -pm755 /etc/apt/keyrings \
+    && wget -qO /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key \
+    && wget -qNP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/jammy/winehq-jammy.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends wine-stable-amd64 wine-stable-i386 wine-stable \
+    && rm -rf /var/lib/apt/lists/*
+ENV PATH=/opt/wine-stable/bin:$PATH
 
 WORKDIR /workspace

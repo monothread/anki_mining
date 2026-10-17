@@ -25,6 +25,8 @@ Commands:
 EOT
 }
 
+# The image of an earlier build set WINEARCH=win64, which Wine 11 cannot use; the wrapper in the
+# docker run below drops it, so the image works whichever way it was built.
 run_in_container() {
     mkdir -p "${CACHE_DIR}/cargo" "${CACHE_DIR}/home-win" "${ROOT}/dist"
     docker run --rm --init \
@@ -35,7 +37,7 @@ run_in_container() {
         --volume "${CACHE_DIR}:/cache" \
         --workdir /workspace \
         $([ -t 0 ] && echo "--interactive --tty") \
-        "${IMAGE}" "$@"
+        "${IMAGE}" bash -c 'unset WINEARCH; exec "$@"' bash "$@"
 }
 
 command="${1:-}"
