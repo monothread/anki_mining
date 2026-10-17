@@ -65,6 +65,8 @@ describe('renderSettings', () => {
         expect(field(root, 'audioOnCards').checked).toBe(true);
         expect(field(root, 'audioSeconds').value).toBe('8');
         expect(field(root, 'closeToTray').checked).toBe(false);
+        expect(root.querySelector('.general input[name="closeToTray"]')).toBeNull();
+        expect(root.querySelector('.application input[name="closeToTray"]')).not.toBeNull();
         expect(root.querySelector<HTMLSelectElement>('select[name="duplicatePolicy"]')?.value).toBe('skip');
         expect(root.querySelector<HTMLSelectElement>('select[name="defaultProfileId"]')?.value).toBe('default');
     });

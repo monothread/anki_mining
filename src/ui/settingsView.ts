@@ -216,9 +216,15 @@ export function renderSettings(root: HTMLElement, settings: MiningSettings, hand
         labelled('Longest audio clip (seconds)', audioSecondsInput(settings.audioSeconds)),
         labelled('When the card already exists', duplicateSelect(settings.duplicatePolicy)),
         labelled('Default profile', defaultProfileSelect(settings)),
-        labelled('Keep running in the system tray when the window is closed', checkbox('closeToTray', settings.closeToTray)),
     );
     root.append(general);
+
+    const application = element('fieldset', 'application');
+    application.append(
+        element('legend', undefined, 'Application'),
+        labelled('Keep running in the system tray when the window is closed', checkbox('closeToTray', settings.closeToTray)),
+    );
+    root.append(application);
 
     const removable = settings.profiles.length > 1;
     for (const profile of settings.profiles) {
