@@ -57,9 +57,9 @@ The product must work after installing a single app, with no browser extension o
 **Acceptance criteria:** mpv subtitles appear in the overlay with timestamps and cards use the exact clip. There is no browser extension (user decision).
 - [x] P4-02 — `MpvSource` via IPC socket (exact subtitle text, no OCR)
 - [x] P4-03 — Sync audio trimming with subtitle timestamps
-- [ ] P4-05 — Evaluate AT-SPI (accessibility) as a text source for apps that expose text; keep only if coverage is useful
+- [x] P4-05 — Evaluate AT-SPI (accessibility) as a text source for apps that expose text; keep only if coverage is useful (evaluated, not built: ADR-014)
 - [-] P4-01 — Browser extension: dropped by user decision (the app works without one)
-- [ ] P4-04 — Tests and documentation
+- [x] P4-04 — Tests and documentation
 
 ## Phase 5 — Profiles and decks per source
 **Acceptance criteria:** mining on YouTube goes to the "Youtube" deck; in game X, to the "Games" deck.
