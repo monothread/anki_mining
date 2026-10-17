@@ -51,6 +51,8 @@ const DICTIONARY_DIR_VARIABLE: &str = "ANKI_MINING_DICTIONARY_DIR";
 const SENTENCE_EVENT: &str = "sentence";
 const MINE_EVENT: &str = "mine-hotkey";
 const MINE_RESULT_EVENT: &str = "mine-result";
+/// Sent when the shortcut starts adding a card, so the windows can show that it is being added.
+const MINE_STARTED_EVENT: &str = "mine-started";
 const ERROR_EVENT: &str = "app-error";
 const OCR_REGION_EVENT: &str = "ocr-region";
 const MANUAL_SOURCE_ID: &str = "manual";
@@ -187,43 +189,69 @@ fn mine_remembered(
     }
 }
 
+/// Runs slow work off the main thread. A command that is not `async` runs on the main thread, and
+/// while it works (talking to Anki, making the voice) every window stops: the button would not even
+/// be redrawn as "adding".
+async fn off_main_thread<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    tauri::async_runtime::spawn_blocking(work).await.ok()
+}
+
+const INTERNAL_ERROR: &str = "internal error: the work stopped unexpectedly";
+
 #[tauri::command]
-fn known_words(state: State<'_, AppState>, words: Vec<String>) -> Result<Vec<bool>, String> {
-    state
-        .known_words(&words, None)
-        .map_err(|error| error.to_string())
+async fn known_words(app: AppHandle, words: Vec<String>) -> Result<Vec<bool>, String> {
+    off_main_thread(move || {
+        app.state::<AppState>()
+            .known_words(&words, None)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .unwrap_or_else(|| Err(INTERNAL_ERROR.to_string()))
 }
 
 #[tauri::command]
-fn speak_text(state: State<'_, AppState>, text: String) -> Result<(), String> {
-    state.speak_aloud(&text)
+async fn speak_text(app: AppHandle, text: String) -> Result<(), String> {
+    off_main_thread(move || app.state::<AppState>().speak_aloud(&text))
+        .await
+        .unwrap_or_else(|| Err(INTERNAL_ERROR.to_string()))
 }
 
 #[tauri::command]
-fn mine_hover(
-    state: State<'_, AppState>,
-    memory: State<'_, HoverMemory>,
-    result_index: usize,
-    entry_index: usize,
-) -> MineResult {
-    mine_remembered(&state, &memory, result_index, entry_index)
+async fn mine_hover(app: AppHandle, result_index: usize, entry_index: usize) -> MineResult {
+    off_main_thread(move || {
+        mine_remembered(
+            &app.state::<AppState>(),
+            &app.state::<HoverMemory>(),
+            result_index,
+            entry_index,
+        )
+    })
+    .await
+    .unwrap_or_else(|| MineResult {
+        success: false,
+        message: INTERNAL_ERROR.to_string(),
+    })
 }
 
 /// The mining shortcut: adds the word shown in the popup, or, when there is none, tells the main
-/// window (which mines the word selected in its own sentence view).
+/// window (which mines the word selected in its own sentence view). The work is done on a thread
+/// of its own, so the windows keep drawing while the card is made.
 fn handle_mine_shortcut(app: &AppHandle) {
     let popup_word = app
         .try_state::<HoverMemory>()
         .and_then(|memory| memory.get());
-    let (Some(_), Some(state), Some(memory)) = (
-        popup_word,
-        app.try_state::<AppState>(),
-        app.try_state::<HoverMemory>(),
-    ) else {
+    if popup_word.is_none() || app.try_state::<AppState>().is_none() {
         let _ = app.emit(MINE_EVENT, ());
         return;
-    };
-    let _ = app.emit(MINE_RESULT_EVENT, mine_remembered(&state, &memory, 0, 0));
+    }
+    let _ = app.emit(MINE_STARTED_EVENT, ());
+    let app = app.clone();
+    thread::spawn(move || {
+        let outcome = mine_remembered(&app.state::<AppState>(), &app.state::<HoverMemory>(), 0, 0);
+        let _ = app.emit(MINE_RESULT_EVENT, outcome);
+    });
 }
 
 #[tauri::command]
@@ -238,28 +266,36 @@ fn scan_at(
 }
 
 #[tauri::command]
-fn mine(
-    state: State<'_, AppState>,
-    input: CardInput,
-    profile_id: Option<String>,
-) -> Result<u64, String> {
-    state
-        .mine(&input, profile_id.as_deref())
-        .map_err(|error| error.to_string())
+async fn mine(app: AppHandle, input: CardInput, profile_id: Option<String>) -> Result<u64, String> {
+    off_main_thread(move || {
+        app.state::<AppState>()
+            .mine(&input, profile_id.as_deref())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .unwrap_or_else(|| Err(INTERNAL_ERROR.to_string()))
 }
 
 #[tauri::command]
-fn import_dictionary(state: State<'_, AppState>, path: String) -> Result<ImportStats, String> {
-    state
-        .import_dictionary(Path::new(&path))
-        .map_err(|error| error.to_string())
+async fn import_dictionary(app: AppHandle, path: String) -> Result<ImportStats, String> {
+    off_main_thread(move || {
+        app.state::<AppState>()
+            .import_dictionary(Path::new(&path))
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .unwrap_or_else(|| Err(INTERNAL_ERROR.to_string()))
 }
 
 #[tauri::command]
-fn import_yomitan(state: State<'_, AppState>, path: String) -> Result<MetadataStats, String> {
-    state
-        .import_yomitan(Path::new(&path))
-        .map_err(|error| error.to_string())
+async fn import_yomitan(app: AppHandle, path: String) -> Result<MetadataStats, String> {
+    off_main_thread(move || {
+        app.state::<AppState>()
+            .import_yomitan(Path::new(&path))
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .unwrap_or_else(|| Err(INTERNAL_ERROR.to_string()))
 }
 
 #[tauri::command]

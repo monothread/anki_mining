@@ -12,6 +12,8 @@ export interface PopupBackend {
     speak: (text: string) => Promise<void>;
     onHoverResult: (handler: (result: HoverResult) => void) => Promise<() => void>;
     onMineResult: (handler: (result: MineResult) => void) => Promise<() => void>;
+    /** The mining shortcut started adding a card (the result follows in `onMineResult`). */
+    onMineStarted: (handler: () => void) => Promise<() => void>;
     /** Which words of the sentence already have a card (arrives a moment after the sentence). */
     onKnownWords: (handler: (known: KnownWords) => void) => Promise<() => void>;
 }
@@ -31,6 +33,11 @@ export const tauriPopupBackend: PopupBackend = {
     onMineResult: async (handler) => {
         return listen<MineResult>('mine-result', (message) => {
             handler(message.payload);
+        });
+    },
+    onMineStarted: async (handler) => {
+        return listen('mine-started', () => {
+            handler();
         });
     },
     onKnownWords: async (handler) => {

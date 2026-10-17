@@ -43,6 +43,10 @@ body {
     color: #6fd08c;
 }
 
+.popup-message[data-kind='info'] {
+    color: #9aa0b4;
+}
+
 .popup-message[data-kind='error'] {
     color: #ff7b7b;
 }

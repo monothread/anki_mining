@@ -13,6 +13,7 @@ interface Mounted {
     emitHoverResult: (result: HoverResult) => void;
     emitMineResult: (result: MineResult) => void;
     emitKnown: (known: KnownWords) => void;
+    emitMineStarted: () => void;
     unsubscribes: ReturnType<typeof vi.fn<() => void>>[];
     dispose: () => void;
 }
@@ -29,7 +30,10 @@ async function mount(): Promise<Mounted> {
     let knownHandler: (known: KnownWords) => void = () => {
         return undefined;
     };
-    const unsubscribes = [vi.fn<() => void>(), vi.fn<() => void>(), vi.fn<() => void>()];
+    let startedHandler: () => void = () => {
+        return undefined;
+    };
+    const unsubscribes = [vi.fn<() => void>(), vi.fn<() => void>(), vi.fn<() => void>(), vi.fn<() => void>()];
     const mine = vi
         .fn<PopupBackend['mine']>()
         .mockResolvedValue({ success: true, message: 'Added 友達 (note 1)' });
@@ -49,6 +53,10 @@ async function mount(): Promise<Mounted> {
             knownHandler = handler;
             return Promise.resolve(unsubscribes[2] ?? vi.fn<() => void>());
         },
+        onMineStarted: (handler) => {
+            startedHandler = handler;
+            return Promise.resolve(unsubscribes[3] ?? vi.fn<() => void>());
+        },
     };
     const dispose = await createPopup(root, backend);
     return {
@@ -63,6 +71,9 @@ async function mount(): Promise<Mounted> {
         },
         emitKnown: (known) => {
             knownHandler(known);
+        },
+        emitMineStarted: () => {
+            startedHandler();
         },
         unsubscribes,
         dispose,
@@ -285,6 +296,52 @@ describe('createPopup', () => {
         expect(root.querySelector('.popup-token.known')?.textContent).toBe('友達');
         emitMineResult({ success: false, message: 'duplicate' });
         expect(root.querySelectorAll('.popup-token.known')).toHaveLength(1);
+    });
+
+    it('shows that the card is being added while the click is being handled', async () => {
+        let finish: (outcome: MineResult) => void = () => {
+            return undefined;
+        };
+        const { root, mine, emitHoverResult } = await mount();
+        mine.mockImplementation(() => {
+            return new Promise<MineResult>((resolve) => {
+                finish = resolve;
+            });
+        });
+        emitHoverResult(HOVER_RESULT);
+
+        root.querySelector<HTMLButtonElement>('button.mine')?.click();
+
+        expect(message(root).textContent).toBe('Adding to Anki\u2026');
+        expect(message(root).dataset['kind']).toBe('info');
+        expect(root.querySelector('button.mine')?.classList.contains('loading')).toBe(true);
+        expect(root.querySelector('button.mine .spinner')).not.toBeNull();
+
+        finish({ success: true, message: 'Added 友達 (note 1)' });
+        await vi.waitFor(() => {
+            expect(message(root).textContent).toBe('Added 友達 (note 1)');
+        });
+        expect(root.querySelector('button.mine')?.textContent).toBe('Added \u2713');
+    });
+
+    it('shows the loading state when the mining shortcut starts and its result when it ends', async () => {
+        const { root, emitHoverResult, emitMineStarted, emitMineResult } = await mount();
+        emitHoverResult(HOVER_RESULT);
+
+        emitMineStarted();
+
+        expect(message(root).textContent).toBe('Adding to Anki\u2026');
+        expect(root.querySelector('button.mine')?.classList.contains('loading')).toBe(true);
+
+        emitMineResult({ success: false, message: 'duplicate' });
+        expect(message(root).textContent).toBe('duplicate');
+        expect(root.querySelector('button.mine')?.classList.contains('loading')).toBe(false);
+        expect(root.querySelector<HTMLButtonElement>('button.mine')?.disabled).toBe(false);
+
+        emitMineStarted();
+        emitMineResult({ success: true, message: 'Added 友達 (note 2)' });
+        expect(root.querySelector('button.mine')?.textContent).toBe('Added \u2713');
+        expect(root.querySelector('.popup-token.known')?.textContent).toBe('友達');
     });
 });
 

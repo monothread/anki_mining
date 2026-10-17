@@ -40,10 +40,10 @@ export function renderLookup(
 
 const MINE_LABEL = 'Add to Anki';
 
-type MineState = 'idle' | 'loading' | 'done';
+export type MineState = 'idle' | 'loading' | 'done';
 
 /** The look of the "Add to Anki" button: ready, adding (spinner) or added. */
-function setMineState(button: HTMLButtonElement, state: MineState): void {
+export function setMineState(button: HTMLButtonElement, state: MineState): void {
     button.classList.toggle('loading', state === 'loading');
     button.classList.toggle('done', state === 'done');
     button.disabled = state !== 'idle';

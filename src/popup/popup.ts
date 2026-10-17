@@ -1,6 +1,7 @@
 import type { PopupBackend } from '../ipc/popup';
 import type { MineResult } from '../types/mine';
 import { markAdded, markKnown } from '../ui/known';
+import { setMineState } from '../ui/lookupView';
 import type { HoverResult } from '../types/hover';
 import { renderHoverResult } from './view';
 
@@ -17,6 +18,16 @@ export async function createPopup(root: HTMLElement, backend: PopupBackend): Pro
     if (body === null || message === null) {
         throw new Error('Missing popup elements');
     }
+
+    const showAdding = (): void => {
+        message.textContent = 'Adding to Anki\u2026';
+        message.dataset['kind'] = 'info';
+    };
+
+    /** The button of the entry the mining shortcut adds (the first one). */
+    const shortcutButton = (): HTMLButtonElement | null => {
+        return body.querySelector<HTMLButtonElement>('button.mine');
+    };
 
     const showMessage = (result: MineResult): void => {
         message.textContent = result.message;
@@ -54,6 +65,7 @@ export async function createPopup(root: HTMLElement, backend: PopupBackend): Pro
                     });
                 },
                 onMine: (resultIndex, entryIndex) => {
+                    showAdding();
                     return backend
                         .mine(resultIndex, entryIndex)
                         .then((outcome) => {
@@ -70,8 +82,19 @@ export async function createPopup(root: HTMLElement, backend: PopupBackend): Pro
                 },
             });
         }),
+        backend.onMineStarted(() => {
+            showAdding();
+            const button = shortcutButton();
+            if (button !== null) {
+                setMineState(button, 'loading');
+            }
+        }),
         backend.onMineResult((outcome) => {
             showMessage(outcome);
+            const button = shortcutButton();
+            if (button !== null) {
+                setMineState(button, outcome.success ? 'done' : 'idle');
+            }
             if (outcome.success) {
                 // The shortcut adds the first entry of the word that is shown.
                 markEntryAdded(0, 0);
