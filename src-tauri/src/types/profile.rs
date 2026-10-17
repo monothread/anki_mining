@@ -14,7 +14,7 @@ pub enum MiningField {
     Frequency,
     Pitch,
     Source,
-    /// The word spoken by the synthesized voice.
+    /// The word spoken by the synthesized voice (it goes in the same field as the sentence audio by default).
     WordAudio,
 }
 
@@ -44,7 +44,10 @@ impl MiningField {
             MiningField::Frequency => "Frequency",
             MiningField::Pitch => "Pitch",
             MiningField::Source => "Source",
-            MiningField::WordAudio => "WordAudio",
+            // Heard from the same field as the sentence (first the word, then the sentence), so the
+            // note type needs no field of its own: changing a note type's structure makes Anki ask
+            // for a full sync with AnkiWeb.
+            MiningField::WordAudio => "SentenceAudio",
         }
     }
 }
@@ -97,7 +100,7 @@ mod tests {
             "frequency": "Frequency",
             "pitch": "Pitch",
             "source": "Source",
-            "wordAudio": "WordAudio"
+            "wordAudio": "SentenceAudio"
         })
     }
 

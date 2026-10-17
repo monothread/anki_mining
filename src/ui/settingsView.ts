@@ -22,7 +22,7 @@ const FIELD_LABELS: Record<MiningField, string> = {
     frequency: 'Frequency',
     pitch: 'Pitch',
     source: 'Source',
-    wordAudio: 'Word audio (voice)',
+    wordAudio: 'Word audio (voice; same field as the sentence audio by default)',
 };
 
 /** The id for a new profile: `profile-2`, `profile-3`, ... the first one nobody uses. */

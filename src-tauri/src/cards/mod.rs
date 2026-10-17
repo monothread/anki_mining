@@ -212,7 +212,6 @@ mod tests {
                     ("Frequency".to_string(), "1520".to_string()),
                     ("Pitch".to_string(), String::new()),
                     ("Source".to_string(), "YouTube".to_string()),
-                    ("WordAudio".to_string(), String::new()),
                 ]),
                 tags: vec!["anki-mining".to_string()],
                 audio: vec![],
@@ -258,7 +257,7 @@ mod tests {
 
         let note = build_note(&profile, &input());
 
-        assert_eq!(note.fields.len(), 8);
+        assert_eq!(note.fields.len(), 7);
         assert_eq!(note.fields.get("Pitch"), None);
         assert_eq!(note.fields.get("Frequency"), None);
     }

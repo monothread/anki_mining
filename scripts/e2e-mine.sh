@@ -68,7 +68,12 @@ else
     sleep 0.5
     xdotool click 1
 fi
-sleep 3
+# MINE_SNAPSHOT_AFTER=<seconds> also saves what the screen looks like while the card is being added.
+if [ -n "${MINE_SNAPSHOT_AFTER:-}" ]; then
+    sleep "${MINE_SNAPSHOT_AFTER}"
+    import -window root "${OUT}/while-mining.png"
+fi
+sleep 6
 import -window root "${OUT}/after-mining.png"
 echo "--- requests received by the mock AnkiConnect:"
 cat "${OUT}/anki-requests.jsonl" 2>/dev/null || echo "(none)"

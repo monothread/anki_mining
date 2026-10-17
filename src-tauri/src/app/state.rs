@@ -96,7 +96,6 @@ pub struct AppState {
     audio: Option<SharedAudio>,
     subtitles: Option<SubtitleClock>,
     speaker: Option<Arc<dyn Speaker>>,
-    fields_ready: AtomicBool,
     /// Words already spoken for the listen buttons, so a second click is instant.
     heard: Mutex<HashMap<String, Arc<Vec<u8>>>>,
     player: SoundPlayer,
@@ -145,7 +144,6 @@ impl AppState {
             audio: None,
             subtitles: None,
             speaker: None,
-            fields_ready: AtomicBool::new(false),
             heard: Mutex::new(HashMap::new()),
             player: Arc::new(play_wav),
         }
@@ -392,15 +390,6 @@ impl AppState {
         if profile.model_name == DEFAULT_MODEL_NAME && !self.model_ready.load(Ordering::SeqCst) {
             self.anki.ensure_model(&default_mining_model())?;
             self.model_ready.store(true, Ordering::SeqCst);
-        }
-        if profile.model_name == DEFAULT_MODEL_NAME
-            && spoken.word_audio.is_some()
-            && !self.fields_ready.load(Ordering::SeqCst)
-        {
-            // A note type made by an older version of the app has no field for the word audio.
-            self.anki.ensure_fields(&default_mining_model())?;
-            self.anki.ensure_audio_templates(DEFAULT_MODEL_NAME)?;
-            self.fields_ready.store(true, Ordering::SeqCst);
         }
         let allow_duplicate = config.duplicate_policy == DuplicatePolicy::Allow;
         Ok(self
@@ -663,8 +652,7 @@ mod tests {
                 "Picture": "",
                 "Frequency": "",
                 "Pitch": "",
-                "Source": "clipboard",
-                "WordAudio": ""
+                "Source": "clipboard"
             })
         );
         assert_eq!(note["tags"], json!(["anki-mining"]));
@@ -1514,39 +1502,9 @@ mod tests {
         .expect("base64")
     }
 
-    fn fields_reply() -> Reply {
-        ok(json!([
-            "Expression",
-            "Reading",
-            "Meaning",
-            "Sentence",
-            "SentenceAudio",
-            "Picture",
-            "Frequency",
-            "Pitch",
-            "Source"
-        ]))
-    }
-
-    fn templates_reply() -> Reply {
-        ok(json!({
-            "Recognition": {
-                "Front": "{{Expression}}\n{{Sentence}}\n{{SentenceAudio}}",
-                "Back": "{{FrontSide}}\n{{Meaning}}"
-            }
-        }))
-    }
-
     #[test]
     fn the_card_gets_the_word_and_the_sentence_read_by_the_voice() {
-        let mock = MockAnki::start(vec![
-            ok(json!(["AnkiMining"])),
-            fields_reply(),
-            ok(json!({})),
-            templates_reply(),
-            ok(json!({})),
-            ok(json!(5)),
-        ]);
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
         let speaker = FakeSpeaker::new(None);
         let state = spoken_state(&mock, &speaker, Config::default());
 
@@ -1557,19 +1515,15 @@ mod tests {
             vec!["ねこ".to_string(), "猫が好き".to_string()]
         );
         let requests = mock.requests();
-        let audio = &requests[5]["params"]["note"]["audio"];
+        let audio = &requests[1]["params"]["note"]["audio"];
         assert_eq!(audio.as_array().map(Vec::len), Some(2));
-        let by_field = |field: &str| {
-            audio
-                .as_array()
-                .expect("audio")
-                .iter()
-                .find(|file| file["fields"] == json!([field]))
-                .expect("file for the field")
-                .clone()
-        };
-        let word = by_field("WordAudio");
-        let sentence = by_field("SentenceAudio");
+        let files = audio.as_array().expect("audio");
+        // Both sounds are heard from the same field, the word first and then the sentence.
+        assert!(files
+            .iter()
+            .all(|file| file["fields"] == json!(["SentenceAudio"])));
+        let word = &files[0];
+        let sentence = &files[1];
         assert!(word["filename"]
             .as_str()
             .expect("name")
@@ -1584,14 +1538,7 @@ mod tests {
 
     #[test]
     fn a_real_recording_of_the_sentence_is_kept_and_only_the_word_is_spoken() {
-        let mock = MockAnki::start(vec![
-            ok(json!(["AnkiMining"])),
-            fields_reply(),
-            ok(json!({})),
-            templates_reply(),
-            ok(json!({})),
-            ok(json!(5)),
-        ]);
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
         let speaker = FakeSpeaker::new(None);
         let state = spoken_state(&mock, &speaker, Config::default());
         let recorded = CardInput {
@@ -1605,7 +1552,7 @@ mod tests {
         state.mine(&recorded, None).expect("note");
 
         assert_eq!(speaker.said(), vec!["ねこ".to_string()]);
-        let audio = mock.requests()[5]["params"]["note"]["audio"].clone();
+        let audio = mock.requests()[1]["params"]["note"]["audio"].clone();
         let files: Vec<(String, serde_json::Value)> = audio
             .as_array()
             .expect("audio")
@@ -1618,10 +1565,11 @@ mod tests {
             })
             .collect();
         assert_eq!(files.len(), 2);
-        assert!(files.contains(&("clip.wav".to_string(), json!(["SentenceAudio"]))));
+        assert!(files[0].0.starts_with("anki-mining-word-"));
+        assert_eq!(files[1].0, "clip.wav");
         assert!(files
             .iter()
-            .any(|(_, fields)| *fields == json!(["WordAudio"])));
+            .all(|(_, fields)| *fields == json!(["SentenceAudio"])));
     }
 
     #[test]
@@ -1662,55 +1610,6 @@ mod tests {
     }
 
     #[test]
-    fn the_missing_word_audio_field_is_added_once_to_an_older_note_type() {
-        let mock = MockAnki::start(vec![
-            ok(json!(["AnkiMining"])),
-            fields_reply(),
-            ok(json!({})),
-            templates_reply(),
-            ok(json!({})),
-            ok(json!(5)),
-            ok(json!(6)),
-        ]);
-        let speaker = FakeSpeaker::new(None);
-        let state = spoken_state(&mock, &speaker, Config::default());
-
-        state.mine(&input(), None).expect("first");
-        state.mine(&input(), None).expect("second");
-
-        assert_eq!(
-            actions(&mock),
-            vec![
-                "modelNames",
-                "modelFieldNames",
-                "modelFieldAdd",
-                "modelTemplates",
-                "updateModelTemplates",
-                "addNote",
-                "addNote"
-            ]
-        );
-        assert_eq!(
-            mock.requests()[2]["params"],
-            json!({ "modelName": "AnkiMining", "fieldName": "WordAudio" })
-        );
-        assert_eq!(
-            mock.requests()[4]["params"],
-            json!({
-                "model": {
-                    "name": "AnkiMining",
-                    "templates": {
-                        "Recognition": {
-                            "Front": "{{Expression}}\n{{Sentence}}\n{{WordAudio}}\n{{SentenceAudio}}",
-                            "Back": "{{FrontSide}}\n{{Meaning}}"
-                        }
-                    }
-                }
-            })
-        );
-    }
-
-    #[test]
     fn a_note_type_of_the_users_own_is_never_changed() {
         let mock = MockAnki::start(vec![ok(json!(5))]);
         let speaker = FakeSpeaker::new(None);
@@ -1735,14 +1634,7 @@ mod tests {
 
     #[test]
     fn the_last_sound_that_played_is_not_taken_for_the_sentence_when_the_voice_can_read_it() {
-        let mock = MockAnki::start(vec![
-            ok(json!(["AnkiMining"])),
-            fields_reply(),
-            ok(json!({})),
-            templates_reply(),
-            ok(json!({})),
-            ok(json!(5)),
-        ]);
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
         let audio = crate::audio::AudioBuffer::shared(60);
         // Something that played earlier, such as the audio of another card.
         audio.lock().expect("audio").push(&vec![4000_i16; 16_000]);
@@ -1757,7 +1649,7 @@ mod tests {
             speaker.said(),
             vec!["ねこ".to_string(), "私は猫が好き".to_string()]
         );
-        let audio = mock.requests()[5]["params"]["note"]["audio"].clone();
+        let audio = mock.requests()[1]["params"]["note"]["audio"].clone();
         let names: Vec<String> = audio
             .as_array()
             .expect("audio")
@@ -1776,14 +1668,7 @@ mod tests {
 
     #[test]
     fn the_exact_recording_of_the_subtitle_is_still_used_and_only_the_word_is_spoken() {
-        let mock = MockAnki::start(vec![
-            ok(json!(["AnkiMining"])),
-            fields_reply(),
-            ok(json!({})),
-            templates_reply(),
-            ok(json!({})),
-            ok(json!(5)),
-        ]);
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
         let audio = crate::audio::AudioBuffer::shared(60);
         let now = Instant::now();
         audio
@@ -1802,29 +1687,22 @@ mod tests {
         state.mine_from_hover(&memory, 0, 0).expect("note");
 
         assert_eq!(speaker.said(), vec!["ねこ".to_string()]);
-        let audio = mock.requests()[5]["params"]["note"]["audio"].clone();
+        let audio = mock.requests()[1]["params"]["note"]["audio"].clone();
         let fields: Vec<serde_json::Value> = audio
             .as_array()
             .expect("audio")
             .iter()
             .map(|file| file["fields"].clone())
             .collect();
-        assert_eq!(fields.len(), 2);
-        assert!(fields.contains(&json!(["SentenceAudio"])));
-        assert!(fields.contains(&json!(["WordAudio"])));
+        assert_eq!(
+            fields,
+            vec![json!(["SentenceAudio"]), json!(["SentenceAudio"])]
+        );
     }
 
     #[test]
     fn two_cards_in_a_row_do_not_share_audio() {
-        let mock = MockAnki::start(vec![
-            ok(json!(["AnkiMining"])),
-            fields_reply(),
-            ok(json!({})),
-            templates_reply(),
-            ok(json!({})),
-            ok(json!(5)),
-            ok(json!(6)),
-        ]);
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5)), ok(json!(6))]);
         let speaker = FakeSpeaker::new(None);
         let state = spoken_state(&mock, &speaker, Config::default());
         let other = CardInput {
@@ -1841,21 +1719,16 @@ mod tests {
         state.mine(&other, None).expect("second");
 
         let requests = mock.requests();
-        let data = |index: usize, field: &str| -> Vec<u8> {
+        let data = |index: usize, position: usize| -> Vec<u8> {
             let files = requests[index]["params"]["note"]["audio"].clone();
-            let file = files
-                .as_array()
-                .expect("audio")
-                .iter()
-                .find(|file| file["fields"] == json!([field]))
-                .expect("file")
-                .clone();
+            let file = files.as_array().expect("audio")[position].clone();
             decode(&file["data"])
         };
-        assert_eq!(data(5, "WordAudio"), "RIFFねこ".as_bytes());
-        assert_eq!(data(6, "WordAudio"), "RIFFたいけん".as_bytes());
-        assert_eq!(data(5, "SentenceAudio"), "RIFF猫が好き".as_bytes());
-        assert_eq!(data(6, "SentenceAudio"), "RIFF体験してみた".as_bytes());
+        // Each card has its own word first and its own sentence second.
+        assert_eq!(data(1, 0), "RIFFねこ".as_bytes());
+        assert_eq!(data(2, 0), "RIFFたいけん".as_bytes());
+        assert_eq!(data(1, 1), "RIFF猫が好き".as_bytes());
+        assert_eq!(data(2, 1), "RIFF体験してみた".as_bytes());
     }
 
     fn recording_player() -> (SoundPlayer, Arc<Mutex<Vec<Vec<u8>>>>) {
@@ -2079,5 +1952,18 @@ mod tests {
             state.known_words(&[], None).expect("known"),
             Vec::<bool>::new()
         );
+    }
+
+    #[test]
+    fn mining_with_the_voice_never_changes_the_structure_of_the_note_type() {
+        // Changing a note type's fields or templates makes Anki ask for a full sync with AnkiWeb.
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5)), ok(json!(6))]);
+        let speaker = FakeSpeaker::new(None);
+        let state = spoken_state(&mock, &speaker, Config::default());
+
+        state.mine(&input(), None).expect("first");
+        state.mine(&input(), None).expect("second");
+
+        assert_eq!(actions(&mock), vec!["modelNames", "addNote", "addNote"]);
     }
 }

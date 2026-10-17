@@ -31,7 +31,7 @@ describe('DEFAULT_FIELD_MAPPING', () => {
             frequency: 'Frequency',
             pitch: 'Pitch',
             source: 'Source',
-            wordAudio: 'WordAudio',
+            wordAudio: 'SentenceAudio',
         });
     });
 

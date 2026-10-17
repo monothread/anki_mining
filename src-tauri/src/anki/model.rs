@@ -17,7 +17,6 @@ b { color: #d33; }
 const FRONT_TEMPLATE: &str = "\
 <div class=\"expression\">{{Expression}}</div>
 <div class=\"sentence\">{{Sentence}}</div>
-{{WordAudio}}
 {{SentenceAudio}}";
 
 const BACK_TEMPLATE: &str = "\
@@ -27,25 +26,6 @@ const BACK_TEMPLATE: &str = "\
 <div class=\"meaning\">{{Meaning}}</div>
 {{Picture}}
 <div class=\"meta\">{{Frequency}} {{Pitch}} {{Source}}</div>";
-
-/// The front and back of a card template of a note type that already exists, with the word audio
-/// played first and the sentence audio second on the front (where both sounds are heard before
-/// the answer). `None` when the front already has the word audio or has no sentence audio to put
-/// it before. A `{{WordAudio}}` an earlier version put on the back is removed, so the word is not
-/// played twice.
-pub fn with_word_audio_first(front: &str, back: &str) -> Option<(String, String)> {
-    const WORD: &str = "{{WordAudio}}";
-    const SENTENCE: &str = "{{SentenceAudio}}";
-    if front.contains(WORD) || !front.contains(SENTENCE) {
-        return None;
-    }
-    let front = front.replacen(SENTENCE, &format!("{WORD}\n{SENTENCE}"), 1);
-    let back = back
-        .replace(&format!("\n{WORD}"), "")
-        .replace(&format!("{WORD}\n"), "")
-        .replace(WORD, "");
-    Some((front, back))
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,14 +49,24 @@ pub struct CreateModel {
     pub card_templates: Vec<CardTemplate>,
 }
 
-/// The note type the app creates when the user does not have one: one field per mining field.
+/// The field names of the note type, in order. Two mining fields may share a field (the word audio
+/// and the sentence audio are both heard from `SentenceAudio`), which is then listed once.
+fn note_type_fields() -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for field in MiningField::ALL {
+        let name = field.default_anki_name().to_string();
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// The note type the app creates when the user does not have one.
 pub fn default_mining_model() -> CreateModel {
     CreateModel {
         model_name: DEFAULT_MODEL_NAME.to_string(),
-        in_order_fields: MiningField::ALL
-            .into_iter()
-            .map(|field| field.default_anki_name().to_string())
-            .collect(),
+        in_order_fields: note_type_fields(),
         css: CSS.to_string(),
         is_cloze: false,
         card_templates: vec![CardTemplate {
@@ -109,8 +99,7 @@ mod tests {
                 "Picture",
                 "Frequency",
                 "Pitch",
-                "Source",
-                "WordAudio"
+                "Source"
             ]
         );
         assert!(!model.is_cloze);
@@ -123,7 +112,7 @@ mod tests {
         assert_eq!(model.card_templates.len(), 1);
         let template = &model.card_templates[0];
         assert_eq!(template.name, "Recognition");
-        for field in ["Expression", "Sentence", "WordAudio", "SentenceAudio"] {
+        for field in ["Expression", "Sentence", "SentenceAudio"] {
             assert!(
                 template.front.contains(&format!("{{{{{field}}}}}")),
                 "front lacks {field}"
@@ -151,7 +140,7 @@ mod tests {
 
         assert_eq!(value["modelName"], json!("AnkiMining"));
         assert_eq!(value["isCloze"], json!(false));
-        assert_eq!(value["inOrderFields"].as_array().map(Vec::len), Some(10));
+        assert_eq!(value["inOrderFields"].as_array().map(Vec::len), Some(9));
         assert_eq!(value["css"], json!(CSS));
         assert_eq!(
             value["cardTemplates"],
@@ -160,58 +149,6 @@ mod tests {
                 "Front": FRONT_TEMPLATE,
                 "Back": BACK_TEMPLATE
             }])
-        );
-    }
-
-    #[test]
-    fn the_default_front_plays_the_word_before_the_sentence() {
-        let front = &default_mining_model().card_templates[0].front;
-
-        let word = front.find("{{WordAudio}}").expect("word audio");
-        let sentence = front.find("{{SentenceAudio}}").expect("sentence audio");
-
-        assert!(word < sentence);
-        assert!(!default_mining_model().card_templates[0]
-            .back
-            .contains("{{WordAudio}}"));
-    }
-
-    #[test]
-    fn an_older_front_gets_the_word_audio_in_front_of_the_sentence_audio() {
-        let (front, back) = with_word_audio_first(
-            "{{Expression}}\n{{Sentence}}\n{{SentenceAudio}}",
-            "{{FrontSide}}\n{{Meaning}}",
-        )
-        .expect("updated");
-
-        assert_eq!(
-            front,
-            "{{Expression}}\n{{Sentence}}\n{{WordAudio}}\n{{SentenceAudio}}"
-        );
-        assert_eq!(back, "{{FrontSide}}\n{{Meaning}}");
-    }
-
-    #[test]
-    fn a_word_audio_an_earlier_version_put_on_the_back_is_moved_to_the_front() {
-        let (front, back) = with_word_audio_first(
-            "{{Sentence}}{{SentenceAudio}}",
-            "{{FrontSide}}\n{{Meaning}}\n{{WordAudio}}\n{{Picture}}",
-        )
-        .expect("updated");
-
-        assert_eq!(front, "{{Sentence}}{{WordAudio}}\n{{SentenceAudio}}");
-        assert_eq!(back, "{{FrontSide}}\n{{Meaning}}\n{{Picture}}");
-    }
-
-    #[test]
-    fn a_front_that_already_has_the_word_audio_or_no_sentence_audio_is_left_alone() {
-        assert_eq!(
-            with_word_audio_first("{{WordAudio}}{{SentenceAudio}}", "{{FrontSide}}"),
-            None
-        );
-        assert_eq!(
-            with_word_audio_first("{{Expression}}", "{{FrontSide}}"),
-            None
         );
     }
 }

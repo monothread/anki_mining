@@ -26,7 +26,7 @@ export const DEFAULT_FIELD_MAPPING: FieldMapping = {
     frequency: 'Frequency',
     pitch: 'Pitch',
     source: 'Source',
-    wordAudio: 'WordAudio',
+    wordAudio: 'SentenceAudio',
 };
 
 export interface ProfileMatch {

@@ -7,7 +7,9 @@ body (one JSON per line) to <log file>.
 Usage: mock-ankiconnect.py <log file> [port]
 """
 import json
+import os
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 LOG = sys.argv[1]
@@ -23,6 +25,9 @@ class Handler(BaseHTTPRequestHandler):
             log.write(json.dumps(request, ensure_ascii=False) + "\n")
 
         action = request.get("action")
+        # MOCK_ADD_DELAY=<seconds> makes adding a note slow, to look at the loading state.
+        if action == "addNote":
+            time.sleep(float(os.environ.get("MOCK_ADD_DELAY", "0")))
         result = None
         if action == "version":
             result = 6
@@ -33,15 +38,6 @@ class Handler(BaseHTTPRequestHandler):
         elif action == "multi":
             # findNotes for each word: only words with 映 (映画) are "in Anki".
             result = [[1] if "映" in a.get("params", {}).get("query", "") else [] for a in request.get("params", {}).get("actions", [])]
-        elif action == "modelFieldNames":
-            # A note type made by an older version of the app: no field for the word audio.
-            result = ["Expression", "Reading", "Meaning", "Sentence", "SentenceAudio", "Picture", "Frequency", "Pitch", "Source"]
-        elif action == "modelFieldAdd":
-            result = None
-        elif action == "modelTemplates":
-            result = {"Recognition": {"Front": "{{Expression}}\n{{Sentence}}\n{{SentenceAudio}}", "Back": "{{FrontSide}}\n{{Meaning}}"}}
-        elif action == "updateModelTemplates":
-            result = None
         elif action == "createModel":
             result = {"id": 1, "name": "AnkiMining"}
         elif action == "canAddNotes":

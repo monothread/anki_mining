@@ -189,8 +189,10 @@ impl Config {
     }
 
     /// A config saved by an older version has no mapping for the fields added since; for the
-    /// note type the app makes itself (which gets those fields) they get the default names. A
-    /// note type of the user's own is left as it is.
+    /// note type the app makes itself they get the default names. The word audio is heard from the
+    /// sentence audio's field: an earlier version mapped it to a `WordAudio` field of its own, but
+    /// adding a field to a note type makes Anki ask for a full sync with AnkiWeb, so that mapping
+    /// is replaced. A note type of the user's own is left as it is.
     fn add_new_fields_to_default_note_type(&mut self) {
         for profile in &mut self.profiles {
             if profile.model_name != DEFAULT_MODEL_NAME {
@@ -201,6 +203,17 @@ impl Config {
                     .field_mapping
                     .entry(field)
                     .or_insert_with(|| field.default_anki_name().to_string());
+            }
+            if profile
+                .field_mapping
+                .get(&MiningField::WordAudio)
+                .map(String::as_str)
+                == Some("WordAudio")
+            {
+                profile.field_mapping.insert(
+                    MiningField::WordAudio,
+                    MiningField::WordAudio.default_anki_name().to_string(),
+                );
             }
         }
     }
@@ -815,7 +828,7 @@ mod tests {
             loaded.profiles[0]
                 .field_mapping
                 .get(&MiningField::WordAudio),
-            Some(&"WordAudio".to_string())
+            Some(&"SentenceAudio".to_string())
         );
         assert_eq!(loaded.profiles[1].field_mapping, old_mapping);
     }
@@ -842,6 +855,56 @@ mod tests {
                 .field_mapping
                 .get(&MiningField::WordAudio),
             Some(&String::new())
+        );
+    }
+
+    #[test]
+    fn a_word_audio_field_of_its_own_from_an_earlier_version_is_mapped_to_the_sentence_audio_field()
+    {
+        let directory = tempfile::tempdir().expect("dir");
+        let path = directory.path().join("config.json");
+        let mut mapping = default_field_mapping();
+        mapping.insert(MiningField::WordAudio, "WordAudio".to_string());
+        let own = Profile {
+            id: "own".to_string(),
+            model_name: "Basic".to_string(),
+            field_mapping: mapping.clone(),
+            ..default_profile()
+        };
+        let default = Profile {
+            field_mapping: mapping.clone(),
+            ..default_profile()
+        };
+        let config = Config {
+            profiles: vec![default, own],
+            ..Config::default()
+        };
+        std::fs::write(&path, serde_json::to_string(&config).expect("json")).expect("write");
+
+        let loaded = Config::load(&path).expect("load");
+
+        assert_eq!(
+            loaded.profiles[0]
+                .field_mapping
+                .get(&MiningField::WordAudio),
+            Some(&"SentenceAudio".to_string())
+        );
+        // A note type of the user's own keeps what the user mapped.
+        assert_eq!(
+            loaded.profiles[1]
+                .field_mapping
+                .get(&MiningField::WordAudio),
+            Some(&"WordAudio".to_string())
+        );
+    }
+
+    #[test]
+    fn the_word_audio_shares_the_field_of_the_sentence_audio_by_default() {
+        let mapping = default_field_mapping();
+
+        assert_eq!(
+            mapping.get(&MiningField::WordAudio),
+            mapping.get(&MiningField::SentenceAudio)
         );
     }
 }
