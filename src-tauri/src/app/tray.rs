@@ -2,7 +2,7 @@
 
 use tauri::menu::{Menu, MenuEvent, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use super::{shutdown, MAIN_LABEL};
 
@@ -22,6 +22,26 @@ pub fn sync_tray(app: &AppHandle, enabled: bool) -> Result<(), String> {
     app.remove_tray_by_id(TRAY_ID);
     show_main_window(app);
     Ok(())
+}
+
+/// Like [`sync_tray`], but on the main thread, which the system tray needs; a failure is
+/// reported to the window.
+pub fn sync_tray_on_main_thread(app: &AppHandle, enabled: bool) {
+    let handle = app.clone();
+    let scheduled = app.run_on_main_thread(move || {
+        if let Err(error) = sync_tray(&handle, enabled) {
+            eprintln!("tray: {error}");
+            let _ = handle.emit("app-error", error);
+        }
+    });
+    if let Err(error) = scheduled {
+        eprintln!("tray: {error}");
+    }
+}
+
+/// Whether the tray icon exists, so the app can still be reached after its window is hidden.
+pub fn is_active(app: &AppHandle) -> bool {
+    app.tray_by_id(TRAY_ID).is_some()
 }
 
 /// Hides the main window instead of closing the app.
@@ -60,10 +80,16 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 show_main_window(tray.app_handle());
             }
         });
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
+    match app.default_window_icon() {
+        Some(icon) => {
+            builder = builder.icon(icon.clone());
+        }
+        None => {
+            eprintln!("tray: the app has no default icon");
+        }
     }
     builder.build(app)?;
+    eprintln!("tray: icon created");
     Ok(())
 }
 

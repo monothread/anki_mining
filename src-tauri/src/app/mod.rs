@@ -125,7 +125,7 @@ fn save_settings(
     settings: MiningSettings,
 ) -> Result<MiningSettings, String> {
     let saved = state.save_settings(settings)?;
-    tray::sync_tray(&app, saved.close_to_tray)?;
+    tray::sync_tray_on_main_thread(&app, saved.close_to_tray);
     Ok(saved)
 }
 
@@ -349,9 +349,11 @@ pub fn run() -> tauri::Result<()> {
                 return;
             }
             let app = window.app_handle();
-            let keep_running = app
-                .try_state::<AppState>()
-                .is_some_and(|state| state.settings().close_to_tray);
+            // Only hide the window when the tray icon is there to bring it back.
+            let keep_running = tray::is_active(app)
+                && app
+                    .try_state::<AppState>()
+                    .is_some_and(|state| state.settings().close_to_tray);
             if keep_running {
                 api.prevent_close();
                 tray::hide_main_window(app);
@@ -438,9 +440,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .with_subtitles(subtitle_clock.unwrap_or_default()),
     );
     start_hover(app, &hover_control, &tokenizer);
-    if let Err(error) = tray::sync_tray(app, close_to_tray) {
-        let _ = app.emit("app-error", error);
-    }
+    tray::sync_tray_on_main_thread(app, close_to_tray);
     Ok(())
 }
 
