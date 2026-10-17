@@ -46,6 +46,9 @@ jobs:
         env:
           VOICEVOX_TERMS_ACCEPTED: "1"
           MINGW_GCC: gcc
+          # The downloader asks the GitHub API for the files; without a token the IP address of the
+          # runner is limited to a few requests an hour.
+          GITHUB_TOKEN: ${{ github.token }}
         run: scripts/fetch-tts.sh windows
 
       - name: Frontend dependencies
