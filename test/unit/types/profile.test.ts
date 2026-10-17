@@ -14,6 +14,7 @@ describe('MINING_FIELDS', () => {
             'frequency',
             'pitch',
             'source',
+            'wordAudio',
         ]);
     });
 });
@@ -30,6 +31,7 @@ describe('DEFAULT_FIELD_MAPPING', () => {
             frequency: 'Frequency',
             pitch: 'Pitch',
             source: 'Source',
+            wordAudio: 'WordAudio',
         });
     });
 

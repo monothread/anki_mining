@@ -22,6 +22,7 @@ const FIELD_LABELS: Record<MiningField, string> = {
     frequency: 'Frequency',
     pitch: 'Pitch',
     source: 'Source',
+    wordAudio: 'Word audio (voice)',
 };
 
 /** The id for a new profile: `profile-2`, `profile-3`, ... the first one nobody uses. */
@@ -165,6 +166,7 @@ export function readSettings(root: HTMLElement): MiningSettings {
         audioSeconds: Number.isNaN(seconds) ? MIN_AUDIO_SECONDS : seconds,
         duplicatePolicy: select('duplicatePolicy').value === 'allow' ? 'allow' : 'skip',
         closeToTray: input(root, 'closeToTray').checked,
+        ttsOnCards: input(root, 'ttsOnCards').checked,
     };
 }
 
@@ -215,6 +217,7 @@ export function renderSettings(root: HTMLElement, settings: MiningSettings, hand
         element('legend', undefined, 'Cards'),
         labelled('Screenshot', checkbox('screenshotOnCards', settings.screenshotOnCards)),
         labelled('Sentence audio', checkbox('audioOnCards', settings.audioOnCards), 'Needs parec (PulseAudio or PipeWire)'),
+        labelled('Spoken word and sentence (voice)', checkbox('ttsOnCards', settings.ttsOnCards), 'A synthesized Japanese voice reads the word and, when there is no recording, the sentence (VOICEVOX:春日部つむぎ)'),
         labelled('Longest audio clip (seconds)', audioSecondsInput(settings.audioSeconds)),
         labelled('When the card already exists', duplicateSelect(settings.duplicatePolicy)),
         labelled('Default profile', defaultProfileSelect(settings)),

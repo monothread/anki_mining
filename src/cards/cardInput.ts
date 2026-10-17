@@ -26,5 +26,6 @@ export function buildCardInput(
         source: describeSource(sentence),
         audio: null,
         picture: null,
+        wordAudio: null,
     };
 }

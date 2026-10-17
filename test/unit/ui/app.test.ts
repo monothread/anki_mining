@@ -328,6 +328,7 @@ describe('createApp lookup and mining', () => {
                 source: 'clipboard - Player',
                 audio: null,
                 picture: null,
+                wordAudio: null,
             },
             null,
         );

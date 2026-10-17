@@ -24,6 +24,7 @@ const BACK_TEMPLATE: &str = "\
 <hr id=\"answer\">
 <div class=\"reading\">{{Reading}}</div>
 <div class=\"meaning\">{{Meaning}}</div>
+{{WordAudio}}
 {{Picture}}
 <div class=\"meta\">{{Frequency}} {{Pitch}} {{Source}}</div>";
 
@@ -89,7 +90,8 @@ mod tests {
                 "Picture",
                 "Frequency",
                 "Pitch",
-                "Source"
+                "Source",
+                "WordAudio"
             ]
         );
         assert!(!model.is_cloze);
@@ -115,6 +117,7 @@ mod tests {
             "Frequency",
             "Pitch",
             "Source",
+            "WordAudio",
         ] {
             assert!(
                 template.back.contains(&format!("{{{{{field}}}}}")),
@@ -130,7 +133,7 @@ mod tests {
 
         assert_eq!(value["modelName"], json!("AnkiMining"));
         assert_eq!(value["isCloze"], json!(false));
-        assert_eq!(value["inOrderFields"].as_array().map(Vec::len), Some(9));
+        assert_eq!(value["inOrderFields"].as_array().map(Vec::len), Some(10));
         assert_eq!(value["css"], json!(CSS));
         assert_eq!(
             value["cardTemplates"],

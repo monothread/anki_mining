@@ -14,6 +14,7 @@ pub mod profiles;
 pub mod sources;
 pub mod text_offsets;
 pub mod tokenizer;
+pub mod tts;
 pub mod types;
 
 /// The X11 tests share one display (and one of them changes `$DISPLAY`), so they take turns.

@@ -32,6 +32,9 @@ pub struct CardInput {
     pub source: String,
     pub audio: Option<MediaFile>,
     pub picture: Option<MediaFile>,
+    /// The word spoken by the synthesized voice.
+    #[serde(default)]
+    pub word_audio: Option<MediaFile>,
 }
 
 /// Builds the note for `input` using the deck, note type and field names of `profile`.
@@ -55,7 +58,11 @@ pub fn build_note(profile: &Profile, input: &CardInput) -> AnkiNote {
         model_name: profile.model_name.clone(),
         fields,
         tags: vec![DEFAULT_TAG.to_string()],
-        audio: media_list(input.audio.as_ref(), profile, MiningField::SentenceAudio),
+        audio: [
+            media_list(input.audio.as_ref(), profile, MiningField::SentenceAudio),
+            media_list(input.word_audio.as_ref(), profile, MiningField::WordAudio),
+        ]
+        .concat(),
         picture: media_list(input.picture.as_ref(), profile, MiningField::Picture),
     }
 }
@@ -82,7 +89,7 @@ fn field_value(field: MiningField, input: &CardInput) -> String {
             .unwrap_or_default(),
         MiningField::Source => escape_html(&input.source),
         MiningField::Pitch => pitch_label(&input.entry.pitch),
-        MiningField::SentenceAudio | MiningField::Picture => String::new(),
+        MiningField::SentenceAudio | MiningField::Picture | MiningField::WordAudio => String::new(),
     }
 }
 
@@ -169,6 +176,7 @@ mod tests {
             source: "YouTube".to_string(),
             audio: None,
             picture: None,
+            word_audio: None,
         }
     }
 
@@ -204,6 +212,7 @@ mod tests {
                     ("Frequency".to_string(), "1520".to_string()),
                     ("Pitch".to_string(), String::new()),
                     ("Source".to_string(), "YouTube".to_string()),
+                    ("WordAudio".to_string(), String::new()),
                 ]),
                 tags: vec!["anki-mining".to_string()],
                 audio: vec![],
@@ -249,7 +258,7 @@ mod tests {
 
         let note = build_note(&profile, &input());
 
-        assert_eq!(note.fields.len(), 7);
+        assert_eq!(note.fields.len(), 8);
         assert_eq!(note.fields.get("Pitch"), None);
         assert_eq!(note.fields.get("Frequency"), None);
     }
@@ -263,6 +272,7 @@ mod tests {
         let with_media = CardInput {
             audio: Some(media("clip.mp3", "AAEC")),
             picture: Some(media("shot.jpg", "AwQF")),
+            word_audio: None,
             ..input()
         };
 
@@ -299,6 +309,7 @@ mod tests {
         let with_media = CardInput {
             audio: Some(media("clip.mp3", "AAEC")),
             picture: Some(media("shot.jpg", "AwQF")),
+            word_audio: None,
             ..input()
         };
 

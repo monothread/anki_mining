@@ -123,6 +123,7 @@ pub fn card_input(
         source: CARD_SOURCE.to_string(),
         audio: None,
         picture: None,
+        word_audio: None,
     })
 }
 

@@ -41,6 +41,7 @@ describe('buildCardInput', () => {
             source: 'clipboard - Player',
             audio: null,
             picture: null,
+            wordAudio: null,
         });
     });
 

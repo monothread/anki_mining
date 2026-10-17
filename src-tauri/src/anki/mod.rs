@@ -90,6 +90,22 @@ impl AnkiClient {
         Ok(true)
     }
 
+    /// Adds the fields of `model` that the existing note type of that name does not have yet
+    /// (a note type made by an older version of the app lacks the newest fields).
+    pub fn ensure_fields(&self, model: &CreateModel) -> Result<(), AnkiError> {
+        let existing: Vec<String> =
+            self.call("modelFieldNames", json!({ "modelName": model.model_name }))?;
+        for field in &model.in_order_fields {
+            if !existing.contains(field) {
+                self.call::<Value>(
+                    "modelFieldAdd",
+                    json!({ "modelName": model.model_name, "fieldName": field }),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     /// Stores base64 `data` in Anki's media folder and returns the name it was stored under.
     pub fn store_media_file(&self, filename: &str, data: &str) -> Result<String, AnkiError> {
         self.call(

@@ -32,6 +32,7 @@ use crate::sources::mpv::{MpvConnection, MpvSource, SubtitleClock};
 use crate::sources::ocr::{OcrSource, RegionHandle, DEFAULT_POLL_INTERVAL as OCR_POLL_INTERVAL};
 use crate::sources::websocket::WebSocketSource;
 use crate::tokenizer::Tokenizer;
+use crate::tts::{Speaker, VoicevoxSpeaker};
 use crate::types::text_source::{TextSource, TextSourceEvent};
 
 use self::hover::{HoverControl, HoverStatus};
@@ -39,6 +40,10 @@ use self::state::{AppState, Startup, Status};
 
 const CONFIG_FILE: &str = "config.json";
 const DICTIONARY_FILE: &str = "jmdict.db";
+/// Folder (inside the bundled resources) that holds the speech helper, its voice and runtime.
+const TTS_RESOURCE_DIR: &str = "tts";
+/// Overrides where the speech files are looked for (development builds have no resources).
+const TTS_DIR_VARIABLE: &str = "ANKI_MINING_TTS_DIR";
 /// Folder (inside the bundled resources) that holds the dictionary.
 const DICTIONARY_RESOURCE_DIR: &str = "dictionary";
 /// Overrides where the bundled dictionary is looked for (development builds have no resources).
@@ -440,21 +445,24 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let close_to_tray = config.close_to_tray;
-    app.manage(
-        AppState::new(
-            config,
-            dictionary,
-            Startup {
-                warnings,
-                websocket_port,
-                ocr_unavailable,
-            },
-            ocr_region,
-        )
-        .with_config_file(config_file)
-        .with_audio(audio)
-        .with_subtitles(subtitle_clock.unwrap_or_default()),
-    );
+    let speaker = start_speaker(app, &config, &mut warnings);
+    let mut state = AppState::new(
+        config,
+        dictionary,
+        Startup {
+            warnings,
+            websocket_port,
+            ocr_unavailable,
+        },
+        ocr_region,
+    )
+    .with_config_file(config_file)
+    .with_audio(audio)
+    .with_subtitles(subtitle_clock.unwrap_or_default());
+    if let Some(speaker) = speaker {
+        state = state.with_speaker(speaker);
+    }
+    app.manage(state);
     start_hover(app, &hover_control, &tokenizer);
     tray::sync_tray_on_main_thread(app, close_to_tray);
     Ok(())
@@ -553,6 +561,34 @@ fn find_ocr_directory(app: &AppHandle) -> Result<PathBuf, String> {
             missing.join(", "),
             candidate.display()
         ))
+    }
+}
+
+/// The voice that reads words and sentences for the cards, when its files are there.
+fn start_speaker(
+    app: &AppHandle,
+    config: &Config,
+    warnings: &mut Vec<String>,
+) -> Option<Arc<dyn Speaker>> {
+    if !config.tts_on_cards {
+        return None;
+    }
+    let directory = match std::env::var_os(TTS_DIR_VARIABLE) {
+        Some(directory) => PathBuf::from(directory),
+        None => match app.path().resource_dir() {
+            Ok(resources) => resources.join(TTS_RESOURCE_DIR),
+            Err(error) => {
+                warnings.push(format!("Cards will have no spoken audio: {error}"));
+                return None;
+            }
+        },
+    };
+    match VoicevoxSpeaker::new(&directory, config.tts_style_id) {
+        Ok(speaker) => Some(Arc::new(speaker)),
+        Err(error) => {
+            warnings.push(format!("Cards will have no spoken audio: {error}"));
+            None
+        }
     }
 }
 

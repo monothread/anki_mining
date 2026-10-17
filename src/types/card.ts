@@ -14,4 +14,6 @@ export interface CardInput {
     source: string;
     audio: MediaFile | null;
     picture: MediaFile | null;
+    /** The word read by the synthesized voice; the app fills it in when the card is made. */
+    wordAudio: MediaFile | null;
 }

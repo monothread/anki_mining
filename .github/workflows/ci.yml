@@ -16,6 +16,9 @@ jobs:
         run: scripts/dev.sh install
       - name: Download the OCR models and the ONNX Runtime library
         run: scripts/dev.sh exec scripts/fetch-ocr-models.sh
+      - name: Fetch the speech (needs the repository variable VOICEVOX_TERMS_ACCEPTED=1)
+        if: vars.VOICEVOX_TERMS_ACCEPTED == '1'
+        run: scripts/dev.sh exec env VOICEVOX_TERMS_ACCEPTED=1 scripts/fetch-tts.sh
       - name: Type check
         run: scripts/dev.sh typecheck
       - name: Lint

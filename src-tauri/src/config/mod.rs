@@ -12,7 +12,8 @@ use thiserror::Error;
 
 use crate::hover::trigger::{TriggerKey, TriggerMode, DEFAULT_DWELL_MS};
 use crate::sources::mpv::DEFAULT_SOCKET as DEFAULT_MPV_SOCKET;
-use crate::types::profile::{default_field_mapping, Profile, ProfileMatch};
+use crate::tts::DEFAULT_STYLE_ID;
+use crate::types::profile::{default_field_mapping, MiningField, Profile, ProfileMatch};
 
 pub const DEFAULT_ANKI_CONNECT_URL: &str = "http://127.0.0.1:8765";
 /// Same port used by Textractor's websocket extension, so existing setups work unchanged.
@@ -69,6 +70,10 @@ pub struct Config {
     pub duplicate_policy: DuplicatePolicy,
     /// Whether closing the window keeps the app running in the system tray.
     pub close_to_tray: bool,
+    /// Whether cards get the word and the sentence read by a synthesized voice.
+    pub tts_on_cards: bool,
+    /// The VOICEVOX voice style used for it (see `tts::DEFAULT_STYLE_ID`).
+    pub tts_style_id: u32,
     pub default_profile_id: String,
     pub profiles: Vec<Profile>,
 }
@@ -89,6 +94,8 @@ impl Default for Config {
             audio_seconds: 8,
             duplicate_policy: DuplicatePolicy::Skip,
             close_to_tray: false,
+            tts_on_cards: true,
+            tts_style_id: DEFAULT_STYLE_ID,
             default_profile_id: DEFAULT_PROFILE_ID.to_string(),
             profiles: vec![default_profile()],
         }
@@ -106,6 +113,7 @@ pub struct MiningSettings {
     pub audio_seconds: u32,
     pub duplicate_policy: DuplicatePolicy,
     pub close_to_tray: bool,
+    pub tts_on_cards: bool,
 }
 
 impl MiningSettings {
@@ -118,6 +126,7 @@ impl MiningSettings {
             audio_seconds: config.audio_seconds,
             duplicate_policy: config.duplicate_policy,
             close_to_tray: config.close_to_tray,
+            tts_on_cards: config.tts_on_cards,
         }
     }
 
@@ -129,6 +138,7 @@ impl MiningSettings {
         config.audio_seconds = self.audio_seconds;
         config.duplicate_policy = self.duplicate_policy;
         config.close_to_tray = self.close_to_tray;
+        config.tts_on_cards = self.tts_on_cards;
     }
 }
 
@@ -168,13 +178,31 @@ impl Config {
             Err(source) => return Err(io_error(path, source)),
         };
 
-        let config: Config =
+        let mut config: Config =
             serde_json::from_str(&contents).map_err(|source| ConfigError::Parse {
                 path: path.display().to_string(),
                 source,
             })?;
+        config.add_new_fields_to_default_note_type();
         config.validate()?;
         Ok(config)
+    }
+
+    /// A config saved by an older version has no mapping for the fields added since; for the
+    /// note type the app makes itself (which gets those fields) they get the default names. A
+    /// note type of the user's own is left as it is.
+    fn add_new_fields_to_default_note_type(&mut self) {
+        for profile in &mut self.profiles {
+            if profile.model_name != DEFAULT_MODEL_NAME {
+                continue;
+            }
+            for field in MiningField::ALL {
+                profile
+                    .field_mapping
+                    .entry(field)
+                    .or_insert_with(|| field.default_anki_name().to_string());
+            }
+        }
     }
 
     /// Validates and atomically writes the config to `path`, creating parent folders.
@@ -317,6 +345,8 @@ mod tests {
         assert_eq!(config.audio_seconds, 8);
         assert_eq!(config.duplicate_policy, DuplicatePolicy::Skip);
         assert!(!config.close_to_tray);
+        assert!(config.tts_on_cards);
+        assert_eq!(config.tts_style_id, 8);
         assert_eq!(config.default_profile_id, "default");
         assert_eq!(config.profiles, vec![default_profile()]);
         assert_eq!(config.profiles[0].deck_name, "Mining");
@@ -341,6 +371,8 @@ mod tests {
         assert_eq!(value["audioSeconds"], json!(8));
         assert_eq!(value["duplicatePolicy"], json!("skip"));
         assert_eq!(value["closeToTray"], json!(false));
+        assert_eq!(value["ttsOnCards"], json!(true));
+        assert_eq!(value["ttsStyleId"], json!(8));
         assert_eq!(value["defaultProfileId"], json!("default"));
         assert_eq!(value["profiles"][0]["deckName"], json!("Mining"));
     }
@@ -737,6 +769,7 @@ mod tests {
         settings.duplicate_policy = DuplicatePolicy::Allow;
         settings.screenshot_on_cards = false;
         settings.close_to_tray = true;
+        settings.tts_on_cards = false;
 
         settings.clone().apply_to(&mut config);
 
@@ -747,8 +780,68 @@ mod tests {
         assert_eq!(value["duplicatePolicy"], json!("allow"));
         assert_eq!(value["screenshotOnCards"], json!(false));
         assert_eq!(value["closeToTray"], json!(true));
+        assert_eq!(value["ttsOnCards"], json!(false));
+        assert!(!config.tts_on_cards);
         assert!(config.close_to_tray);
         assert_eq!(value["defaultProfileId"], json!("default"));
         assert_eq!(value["profiles"][0]["match"]["windowTitle"], json!(null));
+    }
+
+    #[test]
+    fn an_old_config_gets_the_new_fields_only_for_the_default_note_type() {
+        let directory = tempfile::tempdir().expect("dir");
+        let path = directory.path().join("config.json");
+        let mut old_mapping = default_field_mapping();
+        old_mapping.remove(&MiningField::WordAudio);
+        let own = Profile {
+            id: "own".to_string(),
+            model_name: "Basic".to_string(),
+            field_mapping: old_mapping.clone(),
+            ..default_profile()
+        };
+        let default = Profile {
+            field_mapping: old_mapping.clone(),
+            ..default_profile()
+        };
+        let config = Config {
+            profiles: vec![default, own],
+            ..Config::default()
+        };
+        std::fs::write(&path, serde_json::to_string(&config).expect("json")).expect("write");
+
+        let loaded = Config::load(&path).expect("load");
+
+        assert_eq!(
+            loaded.profiles[0]
+                .field_mapping
+                .get(&MiningField::WordAudio),
+            Some(&"WordAudio".to_string())
+        );
+        assert_eq!(loaded.profiles[1].field_mapping, old_mapping);
+    }
+
+    #[test]
+    fn a_field_the_user_switched_off_stays_off() {
+        let directory = tempfile::tempdir().expect("dir");
+        let path = directory.path().join("config.json");
+        let mut mapping = default_field_mapping();
+        mapping.insert(MiningField::WordAudio, String::new());
+        let config = Config {
+            profiles: vec![Profile {
+                field_mapping: mapping,
+                ..default_profile()
+            }],
+            ..Config::default()
+        };
+        std::fs::write(&path, serde_json::to_string(&config).expect("json")).expect("write");
+
+        let loaded = Config::load(&path).expect("load");
+
+        assert_eq!(
+            loaded.profiles[0]
+                .field_mapping
+                .get(&MiningField::WordAudio),
+            Some(&String::new())
+        );
     }
 }

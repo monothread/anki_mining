@@ -14,10 +14,12 @@ pub enum MiningField {
     Frequency,
     Pitch,
     Source,
+    /// The word spoken by the synthesized voice.
+    WordAudio,
 }
 
 impl MiningField {
-    pub const ALL: [MiningField; 9] = [
+    pub const ALL: [MiningField; 10] = [
         MiningField::Expression,
         MiningField::Reading,
         MiningField::Meaning,
@@ -27,6 +29,7 @@ impl MiningField {
         MiningField::Frequency,
         MiningField::Pitch,
         MiningField::Source,
+        MiningField::WordAudio,
     ];
 
     /// Field name used by the default "AnkiMining" note type.
@@ -41,6 +44,7 @@ impl MiningField {
             MiningField::Frequency => "Frequency",
             MiningField::Pitch => "Pitch",
             MiningField::Source => "Source",
+            MiningField::WordAudio => "WordAudio",
         }
     }
 }
@@ -92,7 +96,8 @@ mod tests {
             "picture": "Picture",
             "frequency": "Frequency",
             "pitch": "Pitch",
-            "source": "Source"
+            "source": "Source",
+            "wordAudio": "WordAudio"
         })
     }
 
@@ -135,7 +140,8 @@ mod tests {
                 "picture",
                 "frequency",
                 "pitch",
-                "source"
+                "source",
+                "wordAudio"
             ]
         );
     }

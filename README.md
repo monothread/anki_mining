@@ -19,6 +19,16 @@ computer's audio output with `parec`, which comes with PulseAudio and PipeWire).
 `screenshotOnCards: false` or `audioOnCards: false` in `config.json`; `audioSeconds` sets the longest clip. Duplicates are
 refused. The popup tells you what happened.
 
+## Spoken word and sentence
+
+Every card gets a spoken example from a natural-sounding neural Japanese voice that runs offline inside the app
+([VOICEVOX](https://voicevox.hiroshiba.jp), the voice 春日部つむぎ): the word goes to the `WordAudio` field and
+the sentence to `SentenceAudio` (when the sentence was heard in a video the real recording is kept there instead).
+It takes about 2 seconds per card. Turn it off in **Settings → Cards → Spoken word and sentence**. If your
+"AnkiMining" note type is from an older version, the app adds the `WordAudio` field to it; add `{{WordAudio}}` to
+its card template to hear it on the card. The voice's terms ask for the credit **VOICEVOX:春日部つむぎ** wherever
+you publish audio made with it.
+
 ## Decks per application (profiles)
 
 Open **Settings** to choose where cards go. A profile has a deck, a note type, a field mapping and rules that
@@ -114,6 +124,7 @@ screenshot, mouse move). More in [docs/PROGRESS.md](docs/PROGRESS.md).
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) 1.31 | Runs the OCR models | MIT |
 | [Lindera](https://github.com/lindera/lindera) with UniDic | Japanese tokenizer | MIT; UniDic has its own license |
 | [JMdict](https://www.edrdg.org/jmdict/j_jmdict.html) via [jmdict-simplified](https://github.com/scriptin/jmdict-simplified) | Dictionary, bundled in the app (English meanings) | CC BY-SA 4.0 |
+| [VOICEVOX](https://voicevox.hiroshiba.jp) CORE, ONNX Runtime and the voice 春日部つむぎ | Spoken word and sentence, bundled in the app (`scripts/fetch-tts.sh`) | CORE: MIT; voice and runtime: VOICEVOX terms of use (credit "VOICEVOX:春日部つむぎ" required) |
 | [Kanjium](https://github.com/mifunetoshiro/kanjium) `accents.txt` (pitch accents, by Uros O.) | Pitch accent, bundled in the app | CC BY-SA 4.0 |
 | [Tatoeba](https://tatoeba.org) Japanese sentences | Word frequency ranks counted from them (`data/frequency-ja.tsv.gz`) | CC BY 2.0 FR |
 | [Tauri](https://tauri.app) | App framework | MIT / Apache-2.0 |

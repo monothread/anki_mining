@@ -8,6 +8,7 @@ export const MINING_FIELDS = [
     'frequency',
     'pitch',
     'source',
+    'wordAudio',
 ] as const;
 
 export type MiningField = (typeof MINING_FIELDS)[number];
@@ -25,6 +26,7 @@ export const DEFAULT_FIELD_MAPPING: FieldMapping = {
     frequency: 'Frequency',
     pitch: 'Pitch',
     source: 'Source',
+    wordAudio: 'WordAudio',
 };
 
 export interface ProfileMatch {

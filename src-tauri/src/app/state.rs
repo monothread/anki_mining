@@ -3,6 +3,7 @@ use std::io::BufReader;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Instant;
 
 use serde::Serialize;
@@ -22,6 +23,7 @@ use crate::sources::mpv::SubtitleClock;
 use crate::sources::now_millis;
 use crate::sources::ocr::RegionHandle;
 use crate::text_offsets::utf16_offset_to_byte;
+use crate::tts::{speech_file, Speaker, TtsError};
 
 /// Smaller areas cannot hold a readable line of text.
 pub const MIN_REGION_WIDTH: u32 = 32;
@@ -84,6 +86,24 @@ pub struct AppState {
     model_ready: AtomicBool,
     audio: Option<SharedAudio>,
     subtitles: Option<SubtitleClock>,
+    speaker: Option<Arc<dyn Speaker>>,
+    fields_ready: AtomicBool,
+}
+
+/// The speech as a card file; a failed synthesis is reported on stderr and gives no file.
+fn keep_speech(
+    outcome: Option<Result<Vec<u8>, TtsError>>,
+    kind: &str,
+    timestamp_ms: u64,
+) -> Option<MediaFile> {
+    match outcome {
+        Some(Ok(wav)) => Some(speech_file(&wav, kind, timestamp_ms)),
+        Some(Err(error)) => {
+            eprintln!("speech: {error}");
+            None
+        }
+        None => None,
+    }
 }
 
 /// Whether the text read from the screen is (part of) the subtitle line, ignoring spaces.
@@ -112,6 +132,8 @@ impl AppState {
             model_ready: AtomicBool::new(false),
             audio: None,
             subtitles: None,
+            speaker: None,
+            fields_ready: AtomicBool::new(false),
         }
     }
 
@@ -137,6 +159,37 @@ impl AppState {
     pub fn with_audio(mut self, audio: SharedAudio) -> AppState {
         self.audio = Some(audio);
         self
+    }
+
+    /// Gives the state the voice that reads the word and the sentence for the card.
+    pub fn with_speaker(mut self, speaker: Arc<dyn Speaker>) -> AppState {
+        self.speaker = Some(speaker);
+        self
+    }
+
+    /// The card with the word and the sentence spoken by the synthesized voice: the word always,
+    /// the sentence only when no real recording of it was made. A voice that fails leaves the
+    /// card as it is.
+    fn with_speech(&self, input: &CardInput, enabled: bool) -> CardInput {
+        let mut spoken = input.clone();
+        let Some(speaker) = self.speaker.as_ref().filter(|_| enabled) else {
+            return spoken;
+        };
+        let say_sentence = spoken.audio.is_none();
+        let (word, sentence) = thread::scope(|scope| {
+            let word = scope.spawn(|| speaker.speak(&input.entry.reading));
+            let sentence = say_sentence.then(|| scope.spawn(|| speaker.speak(&input.sentence)));
+            (
+                word.join().ok(),
+                sentence.and_then(|handle| handle.join().ok()),
+            )
+        });
+        let now = now_millis();
+        spoken.word_audio = keep_speech(word, "word", now);
+        if say_sentence {
+            spoken.audio = keep_speech(sentence, "sentence", now);
+        }
+        spoken
     }
 
     /// Tells the state when mpv's subtitles appear and go away, so a card made from one of them
@@ -219,14 +272,23 @@ impl AppState {
             AppError::UnknownProfile(profile_id.unwrap_or(&config.default_profile_id).to_string())
         })?;
 
+        let spoken = self.with_speech(input, config.tts_on_cards);
         if profile.model_name == DEFAULT_MODEL_NAME && !self.model_ready.load(Ordering::SeqCst) {
             self.anki.ensure_model(&default_mining_model())?;
             self.model_ready.store(true, Ordering::SeqCst);
         }
+        if profile.model_name == DEFAULT_MODEL_NAME
+            && spoken.word_audio.is_some()
+            && !self.fields_ready.load(Ordering::SeqCst)
+        {
+            // A note type made by an older version of the app has no field for the word audio.
+            self.anki.ensure_fields(&default_mining_model())?;
+            self.fields_ready.store(true, Ordering::SeqCst);
+        }
         let allow_duplicate = config.duplicate_policy == DuplicatePolicy::Allow;
         Ok(self
             .anki
-            .add_note_with(&build_note(profile, input), allow_duplicate)?)
+            .add_note_with(&build_note(profile, &spoken), allow_duplicate)?)
     }
 
     /// Adds the chosen entry of the word that is shown in the popup (see [`HoverMemory`]) and
@@ -349,6 +411,7 @@ mod tests {
             source: "clipboard".to_string(),
             audio: None,
             picture: None,
+            word_audio: None,
         }
     }
 
@@ -483,7 +546,8 @@ mod tests {
                 "Picture": "",
                 "Frequency": "",
                 "Pitch": "",
-                "Source": "clipboard"
+                "Source": "clipboard",
+                "WordAudio": ""
             })
         );
         assert_eq!(note["tags"], json!(["anki-mining"]));
@@ -1283,5 +1347,240 @@ mod tests {
         std::fs::write(&path, "not a zip").expect("write");
 
         assert!(state.import_yomitan(&path).is_err());
+    }
+
+    /// A voice that records what it was asked to say and answers with a tiny WAV.
+    struct FakeSpeaker {
+        said: Mutex<Vec<String>>,
+        fail_on: Option<&'static str>,
+    }
+
+    impl FakeSpeaker {
+        fn new(fail_on: Option<&'static str>) -> Arc<FakeSpeaker> {
+            Arc::new(FakeSpeaker {
+                said: Mutex::new(Vec::new()),
+                fail_on,
+            })
+        }
+
+        fn said(&self) -> Vec<String> {
+            let mut said = self.said.lock().expect("said").clone();
+            said.sort();
+            said
+        }
+    }
+
+    impl Speaker for FakeSpeaker {
+        fn speak(&self, text: &str) -> Result<Vec<u8>, TtsError> {
+            self.said.lock().expect("said").push(text.to_string());
+            if self.fail_on == Some(text) {
+                return Err(TtsError::NoSound);
+            }
+            Ok([b"RIFF".as_slice(), text.as_bytes()].concat())
+        }
+    }
+
+    fn spoken_state(mock: &MockAnki, speaker: &Arc<FakeSpeaker>, config: Config) -> AppState {
+        state_with(Config {
+            anki_connect_url: mock.url.clone(),
+            ..config
+        })
+        .with_speaker(speaker.clone())
+    }
+
+    fn decode(data: &serde_json::Value) -> Vec<u8> {
+        base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            data.as_str().expect("data"),
+        )
+        .expect("base64")
+    }
+
+    fn fields_reply() -> Reply {
+        ok(json!([
+            "Expression",
+            "Reading",
+            "Meaning",
+            "Sentence",
+            "SentenceAudio",
+            "Picture",
+            "Frequency",
+            "Pitch",
+            "Source"
+        ]))
+    }
+
+    #[test]
+    fn the_card_gets_the_word_and_the_sentence_read_by_the_voice() {
+        let mock = MockAnki::start(vec![
+            ok(json!(["AnkiMining"])),
+            fields_reply(),
+            ok(json!({})),
+            ok(json!(5)),
+        ]);
+        let speaker = FakeSpeaker::new(None);
+        let state = spoken_state(&mock, &speaker, Config::default());
+
+        state.mine(&input(), None).expect("note");
+
+        assert_eq!(
+            speaker.said(),
+            vec!["ねこ".to_string(), "猫が好き".to_string()]
+        );
+        let requests = mock.requests();
+        let audio = &requests[3]["params"]["note"]["audio"];
+        assert_eq!(audio.as_array().map(Vec::len), Some(2));
+        let by_field = |field: &str| {
+            audio
+                .as_array()
+                .expect("audio")
+                .iter()
+                .find(|file| file["fields"] == json!([field]))
+                .expect("file for the field")
+                .clone()
+        };
+        let word = by_field("WordAudio");
+        let sentence = by_field("SentenceAudio");
+        assert!(word["filename"]
+            .as_str()
+            .expect("name")
+            .starts_with("anki-mining-word-"));
+        assert!(sentence["filename"]
+            .as_str()
+            .expect("name")
+            .starts_with("anki-mining-sentence-"));
+        assert_eq!(decode(&word["data"]), "RIFFねこ".as_bytes());
+        assert_eq!(decode(&sentence["data"]), "RIFF猫が好き".as_bytes());
+    }
+
+    #[test]
+    fn a_real_recording_of_the_sentence_is_kept_and_only_the_word_is_spoken() {
+        let mock = MockAnki::start(vec![
+            ok(json!(["AnkiMining"])),
+            fields_reply(),
+            ok(json!({})),
+            ok(json!(5)),
+        ]);
+        let speaker = FakeSpeaker::new(None);
+        let state = spoken_state(&mock, &speaker, Config::default());
+        let recorded = CardInput {
+            audio: Some(MediaFile {
+                filename: "clip.wav".to_string(),
+                data: "AAEC".to_string(),
+            }),
+            ..input()
+        };
+
+        state.mine(&recorded, None).expect("note");
+
+        assert_eq!(speaker.said(), vec!["ねこ".to_string()]);
+        let audio = mock.requests()[3]["params"]["note"]["audio"].clone();
+        let files: Vec<(String, serde_json::Value)> = audio
+            .as_array()
+            .expect("audio")
+            .iter()
+            .map(|file| {
+                (
+                    file["filename"].as_str().expect("name").to_string(),
+                    file["fields"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(files.len(), 2);
+        assert!(files.contains(&("clip.wav".to_string(), json!(["SentenceAudio"]))));
+        assert!(files
+            .iter()
+            .any(|(_, fields)| *fields == json!(["WordAudio"])));
+    }
+
+    #[test]
+    fn the_voice_can_be_turned_off_in_the_config() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+        let speaker = FakeSpeaker::new(None);
+        let state = spoken_state(
+            &mock,
+            &speaker,
+            Config {
+                tts_on_cards: false,
+                ..Config::default()
+            },
+        );
+
+        state.mine(&input(), None).expect("note");
+
+        assert!(speaker.said().is_empty());
+        assert_eq!(mock.requests()[1]["params"]["note"].get("audio"), None);
+    }
+
+    #[test]
+    fn a_voice_that_fails_leaves_the_card_without_that_audio_but_still_adds_it() {
+        let mock = MockAnki::start(vec![ok(json!(["AnkiMining"])), ok(json!(5))]);
+        let speaker = FakeSpeaker::new(Some("ねこ"));
+        let state = spoken_state(&mock, &speaker, Config::default());
+
+        state.mine(&input(), None).expect("note");
+
+        let audio = mock.requests()[1]["params"]["note"]["audio"].clone();
+        let fields: Vec<serde_json::Value> = audio
+            .as_array()
+            .expect("audio")
+            .iter()
+            .map(|file| file["fields"].clone())
+            .collect();
+        assert_eq!(fields, vec![json!(["SentenceAudio"])]);
+    }
+
+    #[test]
+    fn the_missing_word_audio_field_is_added_once_to_an_older_note_type() {
+        let mock = MockAnki::start(vec![
+            ok(json!(["AnkiMining"])),
+            fields_reply(),
+            ok(json!({})),
+            ok(json!(5)),
+            ok(json!(6)),
+        ]);
+        let speaker = FakeSpeaker::new(None);
+        let state = spoken_state(&mock, &speaker, Config::default());
+
+        state.mine(&input(), None).expect("first");
+        state.mine(&input(), None).expect("second");
+
+        assert_eq!(
+            actions(&mock),
+            vec![
+                "modelNames",
+                "modelFieldNames",
+                "modelFieldAdd",
+                "addNote",
+                "addNote"
+            ]
+        );
+        assert_eq!(
+            mock.requests()[2]["params"],
+            json!({ "modelName": "AnkiMining", "fieldName": "WordAudio" })
+        );
+    }
+
+    #[test]
+    fn a_note_type_of_the_users_own_is_never_changed() {
+        let mock = MockAnki::start(vec![ok(json!(5))]);
+        let speaker = FakeSpeaker::new(None);
+        let own = Profile {
+            id: "own".to_string(),
+            model_name: "Basic".to_string(),
+            ..default_profile()
+        };
+        let state = spoken_state(
+            &mock,
+            &speaker,
+            Config {
+                profiles: vec![default_profile(), own],
+                ..Config::default()
+            },
+        );
+
+        state.mine(&input(), Some("own")).expect("note");
+
+        assert_eq!(actions(&mock), vec!["addNote"]);
     }
 }

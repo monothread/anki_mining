@@ -30,6 +30,11 @@ class Handler(BaseHTTPRequestHandler):
             result = ["AnkiMining"]
         elif action == "deckNames":
             result = ["Default", "Mining"]
+        elif action == "modelFieldNames":
+            # A note type made by an older version of the app: no field for the word audio.
+            result = ["Expression", "Reading", "Meaning", "Sentence", "SentenceAudio", "Picture", "Frequency", "Pitch", "Source"]
+        elif action == "modelFieldAdd":
+            result = None
         elif action == "createModel":
             result = {"id": 1, "name": "AnkiMining"}
         elif action == "canAddNotes":

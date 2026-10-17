@@ -13,3 +13,7 @@ src-tauri/resources/ocr/*.so
 
 # The bundled dictionary is built by scripts/build-dictionary.sh
 src-tauri/resources/dictionary/*.db
+
+# The speech files are fetched by scripts/fetch-tts.sh (they carry the VOICEVOX terms of use)
+src-tauri/resources/tts/*
+!src-tauri/resources/tts/README.md

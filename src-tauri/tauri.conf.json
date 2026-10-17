@@ -39,7 +39,8 @@
         ],
         "resources": {
             "resources/ocr/": "ocr/",
-            "resources/dictionary/": "dictionary/"
+            "resources/dictionary/": "dictionary/",
+            "resources/tts/": "tts/"
         }
     }
 }
