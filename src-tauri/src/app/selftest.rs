@@ -44,12 +44,17 @@ pub fn parse_arguments(arguments: &[String]) -> Option<SelfTestRequest> {
     })
 }
 
-/// Where the bundled files are when the app is installed: next to the executable, or in a
-/// `resources` folder there.
+/// Where the bundled files are when the app is installed: next to the executable, in a
+/// `resources` folder there, or where an AppImage keeps them.
 pub fn find_resources(executable_directory: &Path) -> Option<PathBuf> {
     [
         executable_directory.to_path_buf(),
         executable_directory.join("resources"),
+        // Inside an AppImage the executable is in usr/bin and the files are in usr/lib/AnkiMining.
+        executable_directory
+            .join("..")
+            .join("lib")
+            .join("AnkiMining"),
     ]
     .into_iter()
     .find(|candidate| candidate.join("ocr").is_dir())
@@ -303,6 +308,15 @@ mod tests {
         assert_eq!(
             find_resources(directory.path()),
             Some(directory.path().to_path_buf())
+        );
+
+        let appimage = tempfile::tempdir().expect("dir");
+        let binaries = appimage.path().join("usr").join("bin");
+        std::fs::create_dir_all(&binaries).expect("bin");
+        std::fs::create_dir_all(appimage.path().join("usr/lib/AnkiMining/ocr")).expect("lib");
+        assert_eq!(
+            find_resources(&binaries),
+            Some(binaries.join("..").join("lib").join("AnkiMining"))
         );
     }
 

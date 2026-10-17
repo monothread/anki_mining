@@ -6,9 +6,10 @@ meaning, and one click (or Alt+M) adds it to Anki with its sentence.
 
 <p align="center"><img src="src-tauri/app-icon.png" alt="App icon: a star being mined with a pickaxe" width="128"></p>
 
-**Status: first version (0.1.0).** Hover lookup works on X11 (YouTube subtitles, TV banners, web pages,
-any text on screen). Adding a word to Anki works against a mock AnkiConnect and has not been tried against
-a real Anki yet; cards have no picture or audio yet. See [docs/PROGRESS.md](docs/PROGRESS.md).
+**Status: first version (0.1.0), for Linux (X11) and Windows 10/11.** Hover lookup works on any text on
+screen (YouTube subtitles, TV banners, web pages, players, games). Cards get the sentence, a screenshot, the
+word and the sentence read aloud, pitch accent and frequency. Adding a word to Anki works against a mock
+AnkiConnect and has not been tried against a real Anki by the author. See [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Adding words to Anki
 
@@ -48,10 +49,17 @@ decide when it is used: the application (its window class, e.g. `mpv` or `Naviga
 wins; the default profile is used when none matches. You can also choose whether the card is refused or added
 again when it already exists in the deck. **Keep running in the system tray** makes the close button hide the window instead of quitting; use the tray menu to quit.
 
-## Releases
+## Download and updates
 
-Pushing a tag like `v0.2.0` makes GitHub Actions (`.github/workflows/release.yml`) build the AppImage and attach it,
-with a `SHA256SUMS` file, to a release. The app needs an X11 session; Wayland is not supported yet.
+Get the latest version from the [releases page](https://github.com/monothread/anki_mining/releases/latest):
+
+- **Windows 10/11:** `AnkiMining_<version>_x64-setup.exe`. The installer is not signed with a Microsoft
+  certificate, so Windows SmartScreen may say "unknown publisher": choose *More info* and *Run anyway*.
+- **Linux (X11):** `AnkiMining_<version>_amd64.AppImage`; make it executable and run it.
+
+The app looks for a newer version on GitHub a little after it starts (turn it off, or check by hand, in
+**Settings → Application**). When there is one a banner offers **Install and restart**. Every update is
+signed; the app installs only files made with the key of this project.
 
 ## How it works
 
@@ -72,19 +80,23 @@ with a `SHA256SUMS` file, to a release. The app needs an X11 session; Wayland is
 
 ## Requirements
 
-- Linux with **X11** (tested on Linux Mint / Cinnamon). Wayland is planned (see the roadmap).
+- **Windows 10/11** (64-bit), or **Linux with X11** (tested on Linux Mint / Cinnamon; Wayland is not supported yet).
+- On Linux the sentence audio is recorded with `parec` (PulseAudio or PipeWire) and the ▶ buttons play through
+  `paplay`, `pw-play` or `aplay`; on Windows both are built in.
 - A Japanese-capable font for the popup (for example `fonts-noto-cjk`).
 - Anki with the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on (open while mining). The first card creates the note type `AnkiMining` and uses the deck `Mining` (configurable in `config.json`).
 
 ## Run
 
-There is no published release yet: build the AppImage yourself (see "Develop" below; it takes a few
-minutes and only needs Docker), then:
+On Windows, run the installer. On Linux:
 
 ```bash
 chmod +x AnkiMining_0.1.0_amd64.AppImage
 ./AnkiMining_0.1.0_amd64.AppImage
 ```
+
+To read the subtitles of mpv exactly, add `input-ipc-server=/tmp/mpvsocket` (Linux) or
+`input-ipc-server=mpvsocket` (Windows, the named pipe `\\.\pipe\mpvsocket`) to `mpv.conf`.
 
 The dictionary is part of the app: nothing has to be downloaded or imported. It has the 218,000 JMdict entries
 with English meanings, the pitch accent of about 124,000 words (shown as a line over the reading and as `[0]`/`[1]`...
@@ -106,6 +118,19 @@ scripts/dev.sh test           # Vitest + cargo test (under a virtual X11 display
 scripts/dev.sh appimage       # build dist/AnkiMining_0.1.0_amd64.AppImage
 ```
 
+The Windows version is also built in Docker (it is cross-compiled with `cargo-xwin`; the installer is made with NSIS):
+
+```bash
+scripts/win.sh image          # build the Windows image once (about 6 GB)
+scripts/win.sh check          # cargo check for Windows, with the tests
+scripts/win.sh exec bash -c 'npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis'
+```
+
+Running the Windows app needs Windows: the *Windows* workflow on GitHub (Actions > Windows > Run workflow)
+builds the installer on a real Windows machine, runs the tests, installs it, runs `anki-mining --self-test`
+(dictionary, OCR, voice, screen capture and pointer) and opens the app. Releases are made with
+`scripts/release.sh <version>` (see [docs/PROGRESS.md](docs/PROGRESS.md)).
+
 `scripts/e2e-hover.sh` checks the hover lookup end to end without a real screen (virtual display,
 screenshot, mouse move). More in [docs/PROGRESS.md](docs/PROGRESS.md).
 
@@ -124,7 +149,8 @@ screenshot, mouse move). More in [docs/PROGRESS.md](docs/PROGRESS.md).
 - Overlapping subtitle layers can confuse the OCR, and rare kanji in stylised fonts can be misread. The
   word under the cursor is usually right; the sentence shown may be noisy.
 - Vertical text is supported but less accurate than horizontal text (beta model). Multi-line subtitles and neighbouring columns are joined (up to 3 lines around the hovered one).
-- X11 only for now (the global pointer position is not available to apps on Wayland).
+- Linux needs X11 (the global pointer position is not available to apps on Wayland); there is no macOS version.
+- The Windows installer is not code-signed (SmartScreen warns); updates are signed with the project's own key.
 - Cards have no picture or audio yet.
 
 ## Third-party components and licenses
