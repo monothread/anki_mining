@@ -57,7 +57,7 @@ case "${command}" in
         run_in_container xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24 -noreset" bash -c "npm test && cargo test --manifest-path src-tauri/Cargo.toml -- --include-ignored"
         ;;
     appimage)
-        run_in_container bash -c "npx tauri build --bundles appimage && cp src-tauri/target/release/bundle/appimage/*.AppImage dist/"
+        run_in_container bash -c "[ -f src-tauri/resources/dictionary/jmdict.db ] || scripts/build-dictionary.sh; npx tauri build --bundles appimage && cp src-tauri/target/release/bundle/appimage/*.AppImage dist/"
         ;;
     exec)
         run_in_container "$@"

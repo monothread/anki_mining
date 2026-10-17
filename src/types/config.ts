@@ -23,6 +23,8 @@ export interface Config {
     duplicatePolicy: 'skip' | 'allow';
     /** Whether closing the window keeps the app running in the system tray. */
     closeToTray: boolean;
+    /** The language of the meanings shown for a word. */
+    dictionaryLanguage: 'en' | 'pt';
     defaultProfileId: string;
     profiles: Profile[];
 }

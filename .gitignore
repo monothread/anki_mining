@@ -10,3 +10,6 @@ src-tauri/gen/
 # OCR models and the ONNX Runtime library are downloaded by scripts/fetch-ocr-models.sh
 src-tauri/resources/ocr/*.onnx
 src-tauri/resources/ocr/*.so
+
+# The bundled dictionary is built by scripts/build-dictionary.sh
+src-tauri/resources/dictionary/*.db

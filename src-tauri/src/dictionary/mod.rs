@@ -1,5 +1,6 @@
 pub mod deinflect;
 mod import;
+mod portuguese;
 
 use std::io::Read;
 use std::path::Path;
@@ -11,6 +12,59 @@ use thiserror::Error;
 use crate::types::entry::Entry;
 
 pub use import::ImportStats;
+pub use portuguese::PortugueseStats;
+
+/// Version of the dictionary that is bundled with the app; raise it when the bundled data changes.
+pub const BUNDLE_VERSION: u32 = 1;
+/// The `meta` key that tells where the entries came from (`bundled:<version>` or nothing).
+pub const SOURCE_KEY: &str = "source";
+
+/// Copies the bundled dictionary to `target` when there is none there yet, when it is empty, when
+/// it predates the bundled one (no marker) or when it is an older bundled version. A dictionary
+/// the user imported (`custom`) is left alone. Returns
+/// whether it was copied.
+pub fn install_bundled(bundled: &Path, target: &Path) -> Result<bool, DictionaryError> {
+    if !needs_bundled_copy(target)? {
+        return Ok(false);
+    }
+    let partial = target.with_extension("db.part");
+    std::fs::copy(bundled, &partial).map_err(|error| {
+        DictionaryError::Database(rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
+    })?;
+    std::fs::rename(&partial, target).map_err(|error| {
+        DictionaryError::Database(rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
+    })?;
+    Ok(true)
+}
+
+fn needs_bundled_copy(target: &Path) -> Result<bool, DictionaryError> {
+    if !target.exists() {
+        return Ok(true);
+    }
+    let existing = Dictionary::open(target)?;
+    if existing.entry_count()? == 0 {
+        return Ok(true);
+    }
+    // A dictionary with no marker predates the bundled one; only an explicit import is custom.
+    let Some(source) = existing.meta(SOURCE_KEY)? else {
+        return Ok(true);
+    };
+    let installed = source
+        .strip_prefix("bundled:")
+        .and_then(|version| version.parse::<u32>().ok());
+    Ok(installed.is_some_and(|version| version < BUNDLE_VERSION))
+}
+
+/// The language of the meanings that are shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Language {
+    #[default]
+    #[serde(rename = "en")]
+    English,
+    /// Portuguese meanings first (where the dictionary has them), then the English ones.
+    #[serde(rename = "pt")]
+    Portuguese,
+}
 
 /// Longest text (in characters) tried by [`Dictionary::scan`].
 pub const MAX_SCAN_CHARS: usize = 20;
@@ -60,6 +114,7 @@ const WILDCARD: &str = "*";
 /// JMdict-backed dictionary stored in SQLite.
 pub struct Dictionary {
     connection: Connection,
+    language: Language,
 }
 
 impl Dictionary {
@@ -73,12 +128,49 @@ impl Dictionary {
 
     fn from_connection(connection: Connection) -> Result<Dictionary, DictionaryError> {
         import::create_schema(&connection)?;
-        Ok(Dictionary { connection })
+        Ok(Dictionary {
+            connection,
+            language: Language::default(),
+        })
     }
 
     /// Replaces the dictionary contents with a `jmdict-simplified` JSON file.
     pub fn import_jmdict(&mut self, reader: impl Read) -> Result<ImportStats, DictionaryError> {
         import::import_jmdict(&mut self.connection, reader)
+    }
+
+    /// Adds Portuguese meanings from a kaikki.org JSONL dump of the Portuguese Wiktionary.
+    pub fn import_portuguese(
+        &mut self,
+        reader: impl std::io::BufRead,
+    ) -> Result<PortugueseStats, DictionaryError> {
+        portuguese::import(&mut self.connection, reader)
+    }
+
+    /// Chooses the language of the meanings that lookups return.
+    pub fn set_language(&mut self, language: Language) {
+        self.language = language;
+    }
+
+    /// A value kept in the database next to the entries (e.g. where they came from).
+    pub fn meta(&self, key: &str) -> Result<Option<String>, DictionaryError> {
+        let mut statement = self
+            .connection
+            .prepare_cached("SELECT value FROM meta WHERE key = ?1")?;
+        let mut rows = statement.query(params![key])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row.get(0)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<(), DictionaryError> {
+        self.connection.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
     }
 
     pub fn entry_count(&self) -> Result<usize, DictionaryError> {
@@ -107,8 +199,10 @@ impl Dictionary {
     /// JMdict tags (e.g. `v1`, `n`) so deinflection can check the word class.
     pub fn lookup(&self, term: &str) -> Result<Vec<Entry>, DictionaryError> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT entry.id, entry.readings, entry.meanings, entry.pos, term.is_kanji
+            "SELECT entry.id, entry.readings, entry.meanings, entry.pos, term.is_kanji,
+                    entry_pt.meanings
              FROM term JOIN entry ON entry.id = term.entry_id
+             LEFT JOIN entry_pt ON entry_pt.id = entry.id
              WHERE term.text = ?1
              ORDER BY entry.common DESC, entry.id ASC",
         )?;
@@ -119,12 +213,13 @@ impl Dictionary {
                 meanings: row.get(2)?,
                 pos: row.get(3)?,
                 matched_kanji: row.get(4)?,
+                portuguese: row.get(5)?,
             })
         })?;
 
         let mut entries = Vec::new();
         for row in rows {
-            entries.push(row?.into_entry(term)?);
+            entries.push(row?.into_entry(term, self.language)?);
         }
         Ok(entries)
     }
@@ -194,10 +289,11 @@ struct EntryRow {
     meanings: String,
     pos: String,
     matched_kanji: bool,
+    portuguese: Option<String>,
 }
 
 impl EntryRow {
-    fn into_entry(self, term: &str) -> Result<Entry, DictionaryError> {
+    fn into_entry(self, term: &str, language: Language) -> Result<Entry, DictionaryError> {
         let readings: Vec<Reading> = self.parse(&self.readings, "readings")?;
         let reading = if self.matched_kanji {
             reading_for_kanji(&readings, term)
@@ -208,10 +304,25 @@ impl EntryRow {
         Ok(Entry {
             expression: term.to_string(),
             reading,
-            meanings: self.parse(&self.meanings, "meanings")?,
+            meanings: self.meanings_in(language)?,
             parts_of_speech: self.parse(&self.pos, "pos")?,
             frequency: None,
         })
+    }
+
+    /// The English meanings, preceded by the Portuguese ones when that language is chosen.
+    fn meanings_in(&self, language: Language) -> Result<Vec<String>, DictionaryError> {
+        let english: Vec<String> = self.parse(&self.meanings, "meanings")?;
+        let Some(portuguese) = self
+            .portuguese
+            .as_deref()
+            .filter(|_| language == Language::Portuguese)
+        else {
+            return Ok(english);
+        };
+        let mut meanings: Vec<String> = self.parse(portuguese, "meanings_pt")?;
+        meanings.extend(english);
+        Ok(meanings)
     }
 
     fn parse<T: for<'de> Deserialize<'de>>(
@@ -806,5 +917,319 @@ mod tests {
         assert_eq!(json["entries"][0]["reasons"], json!([]));
         assert_eq!(json["entries"][0]["entry"]["expression"], json!("日本語"));
         assert_eq!(json["entries"][0]["entry"]["partsOfSpeech"], json!(["n"]));
+    }
+
+    fn portuguese_dump() -> String {
+        [
+            json!({ "word": "猫", "lang_code": "ja", "pos": "noun", "senses": [{ "glosses": ["gato."] }, { "glosses": ["leitura em hiragana de 猫"] }] }),
+            json!({ "word": "猫", "lang_code": "ja", "pos": "verb", "senses": [{ "glosses": ["não é um verbo"] }] }),
+            json!({ "word": "食べる", "lang_code": "ja", "pos": "verb", "senses": [{ "glosses": ["comer", "ingerir alimento"] }] }),
+            json!({ "word": "ねこ", "lang_code": "ja", "pos": "romanization", "senses": [{ "glosses": ["neko"] }] }),
+            json!({ "word": "palavra", "lang_code": "pt", "pos": "noun", "senses": [{ "glosses": ["fora do japonês"] }] }),
+            json!({ "word": "存在しない", "lang_code": "ja", "pos": "noun", "senses": [{ "glosses": ["sem entrada"] }] }),
+            json!({ "word": "髪", "lang_code": "ja", "pos": "noun", "senses": [{ "glosses": ["cabelo"] }] }),
+            json!({ "word": "髪", "lang_code": "ja", "pos": "noun", "senses": [{ "glosses": ["cabelo"] }, { "glosses": ["pelos da cabeça"] }] }),
+        ]
+        .iter()
+        .map(|row| row.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+            + "\n\n"
+    }
+
+    fn with_portuguese(language: Language) -> Dictionary {
+        let mut dictionary = imported();
+        dictionary
+            .import_portuguese(portuguese_dump().as_bytes())
+            .expect("portuguese");
+        dictionary.set_language(language);
+        dictionary
+    }
+
+    #[test]
+    fn the_portuguese_import_reports_what_matched() {
+        let mut dictionary = imported();
+
+        let stats = dictionary
+            .import_portuguese(portuguese_dump().as_bytes())
+            .expect("portuguese");
+
+        // 猫 (noun), 食べる, 存在しない, 髪 and the verb 猫: the verb and 存在しない match nothing.
+        assert_eq!(
+            stats,
+            PortugueseStats {
+                entries: 3,
+                words: 5,
+                unmatched: 2
+            }
+        );
+    }
+
+    #[test]
+    fn english_is_the_default_even_when_portuguese_is_stored() {
+        let dictionary = with_portuguese(Language::English);
+
+        let entries = dictionary.lookup("猫").expect("lookup");
+
+        assert_eq!(
+            entries[0].meanings,
+            vec!["cat; feline".to_string(), "shamisen".to_string()]
+        );
+    }
+
+    #[test]
+    fn portuguese_meanings_come_first_then_the_english_ones() {
+        let dictionary = with_portuguese(Language::Portuguese);
+
+        assert_eq!(
+            dictionary.lookup("猫").expect("lookup")[0].meanings,
+            vec![
+                "gato".to_string(),
+                "cat; feline".to_string(),
+                "shamisen".to_string()
+            ]
+        );
+        assert_eq!(
+            dictionary.lookup("食べる").expect("lookup")[0].meanings,
+            vec!["comer; ingerir alimento".to_string(), "to eat".to_string()]
+        );
+    }
+
+    #[test]
+    fn repeated_portuguese_meanings_are_stored_once() {
+        let dictionary = with_portuguese(Language::Portuguese);
+
+        assert_eq!(
+            dictionary.lookup("髪").expect("lookup")[0].meanings,
+            vec![
+                "cabelo".to_string(),
+                "pelos da cabeça".to_string(),
+                "hair".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn entries_without_portuguese_keep_their_english_meanings() {
+        let dictionary = with_portuguese(Language::Portuguese);
+
+        assert_eq!(
+            dictionary.lookup("紙").expect("lookup")[0].meanings,
+            vec!["paper".to_string()]
+        );
+    }
+
+    #[test]
+    fn portuguese_is_also_used_for_inflected_forms() {
+        let dictionary = with_portuguese(Language::Portuguese);
+
+        let results = dictionary.lookup_deinflected("食べました").expect("lookup");
+
+        assert_eq!(results[0].entry.meanings[0], "comer; ingerir alimento");
+    }
+
+    #[test]
+    fn importing_portuguese_again_replaces_the_previous_meanings() {
+        let mut dictionary = with_portuguese(Language::Portuguese);
+        let other = json!({ "word": "猫", "lang_code": "ja", "pos": "noun", "senses": [{ "glosses": ["bichano"] }] }).to_string();
+
+        dictionary
+            .import_portuguese(other.as_bytes())
+            .expect("again");
+
+        assert_eq!(
+            dictionary.lookup("猫").expect("lookup")[0].meanings[0],
+            "bichano"
+        );
+        assert_eq!(
+            dictionary.lookup("食べる").expect("lookup")[0].meanings,
+            vec!["to eat".to_string()]
+        );
+    }
+
+    #[test]
+    fn importing_the_english_dictionary_again_drops_the_portuguese_meanings() {
+        let mut dictionary = with_portuguese(Language::Portuguese);
+
+        dictionary
+            .import_jmdict(fixture().as_bytes())
+            .expect("import");
+
+        assert_eq!(
+            dictionary.lookup("猫").expect("lookup")[0].meanings,
+            vec!["cat; feline".to_string(), "shamisen".to_string()]
+        );
+    }
+
+    #[test]
+    fn invalid_portuguese_json_is_an_error() {
+        let mut dictionary = imported();
+
+        let result = dictionary.import_portuguese("not json\n".as_bytes());
+
+        assert!(matches!(result, Err(DictionaryError::InvalidJson(_))));
+    }
+
+    #[test]
+    fn meta_values_are_stored_replaced_and_marked_custom_by_an_import() {
+        let mut dictionary = imported();
+        assert_eq!(
+            dictionary.meta("source").expect("meta"),
+            Some("custom".to_string())
+        );
+
+        dictionary.set_meta("source", "bundled:1").expect("set");
+        dictionary.set_meta("source", "bundled:2").expect("replace");
+        assert_eq!(
+            dictionary.meta("source").expect("meta"),
+            Some("bundled:2".to_string())
+        );
+
+        dictionary
+            .import_jmdict(fixture().as_bytes())
+            .expect("import");
+        assert_eq!(
+            dictionary.meta("source").expect("meta"),
+            Some("custom".to_string())
+        );
+    }
+
+    #[test]
+    fn the_language_is_serialized_as_a_short_code() {
+        assert_eq!(
+            serde_json::to_value(Language::English).expect("json"),
+            json!("en")
+        );
+        assert_eq!(
+            serde_json::to_value(Language::Portuguese).expect("json"),
+            json!("pt")
+        );
+        assert_eq!(
+            serde_json::from_value::<Language>(json!("pt")).expect("language"),
+            Language::Portuguese
+        );
+        assert_eq!(Language::default(), Language::English);
+    }
+
+    fn dictionary_file(
+        directory: &tempfile::TempDir,
+        name: &str,
+        source: Option<&str>,
+        fill: bool,
+    ) -> std::path::PathBuf {
+        let path = directory.path().join(name);
+        let mut dictionary = Dictionary::open(&path).expect("open");
+        if fill {
+            dictionary
+                .import_jmdict(fixture().as_bytes())
+                .expect("import");
+        }
+        match source {
+            None => {
+                dictionary
+                    .connection
+                    .execute("DELETE FROM meta WHERE key = 'source'", [])
+                    .expect("clear");
+            }
+            Some(source) => {
+                dictionary.set_meta(SOURCE_KEY, source).expect("meta");
+            }
+        }
+        path
+    }
+
+    #[test]
+    fn the_bundled_dictionary_is_installed_when_there_is_none() {
+        let directory = tempfile::tempdir().expect("dir");
+        let bundled = dictionary_file(&directory, "bundled.db", Some("bundled:1"), true);
+        let target = directory.path().join("jmdict.db");
+
+        assert!(install_bundled(&bundled, &target).expect("install"));
+
+        assert_eq!(
+            Dictionary::open(&target)
+                .expect("open")
+                .entry_count()
+                .expect("count"),
+            7
+        );
+        assert!(!directory.path().join("jmdict.db.part").exists());
+    }
+
+    #[test]
+    fn an_empty_dictionary_is_replaced_by_the_bundled_one() {
+        let directory = tempfile::tempdir().expect("dir");
+        let bundled = dictionary_file(&directory, "bundled.db", Some("bundled:1"), true);
+        let target = dictionary_file(&directory, "jmdict.db", None, false);
+
+        assert!(install_bundled(&bundled, &target).expect("install"));
+
+        assert_eq!(
+            Dictionary::open(&target)
+                .expect("open")
+                .entry_count()
+                .expect("count"),
+            7
+        );
+    }
+
+    #[test]
+    fn an_older_bundled_version_is_replaced_but_the_current_one_is_kept() {
+        let directory = tempfile::tempdir().expect("dir");
+        let bundled = dictionary_file(&directory, "bundled.db", Some("bundled:1"), true);
+        let older = dictionary_file(&directory, "older.db", Some("bundled:0"), true);
+        let current = dictionary_file(
+            &directory,
+            "current.db",
+            Some(&format!("bundled:{BUNDLE_VERSION}")),
+            true,
+        );
+
+        assert!(install_bundled(&bundled, &older).expect("older"));
+        assert!(!install_bundled(&bundled, &current).expect("current"));
+    }
+
+    #[test]
+    fn a_dictionary_the_user_imported_is_never_replaced() {
+        let directory = tempfile::tempdir().expect("dir");
+        let bundled = dictionary_file(&directory, "bundled.db", Some("bundled:1"), true);
+        let custom = dictionary_file(&directory, "custom.db", Some("custom"), true);
+
+        assert!(!install_bundled(&bundled, &custom).expect("custom"));
+        assert_eq!(
+            Dictionary::open(&custom)
+                .expect("open")
+                .meta(SOURCE_KEY)
+                .expect("meta"),
+            Some("custom".to_string())
+        );
+    }
+
+    #[test]
+    fn a_dictionary_without_a_marker_is_replaced() {
+        let directory = tempfile::tempdir().expect("dir");
+        let bundled = dictionary_file(&directory, "bundled.db", Some("bundled:1"), true);
+        let legacy = dictionary_file(&directory, "legacy.db", None, true);
+
+        assert!(install_bundled(&bundled, &legacy).expect("legacy"));
+        assert_eq!(
+            Dictionary::open(&legacy)
+                .expect("open")
+                .meta(SOURCE_KEY)
+                .expect("meta"),
+            Some("bundled:1".to_string())
+        );
+    }
+
+    #[test]
+    fn a_missing_bundled_file_is_an_error_and_leaves_no_partial_file() {
+        let directory = tempfile::tempdir().expect("dir");
+        let target = directory.path().join("jmdict.db");
+
+        let result = install_bundled(&directory.path().join("missing.db"), &target);
+
+        assert!(result.is_err());
+        assert!(!target.exists());
+        assert!(!directory.path().join("jmdict.db.part").exists());
     }
 }

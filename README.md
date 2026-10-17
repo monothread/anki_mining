@@ -60,9 +60,12 @@ chmod +x AnkiMining_0.1.0_amd64.AppImage
 ./AnkiMining_0.1.0_amd64.AppImage
 ```
 
-The first time, the dictionary is empty and the app asks for a JMdict file. Download
-`jmdict-eng-<version>.json.tgz` from <https://github.com/scriptin/jmdict-simplified/releases>, extract it
-and paste the path of the `.json` file in the app (about 2 seconds to import 218,000 entries).
+The dictionary is part of the app: nothing has to be downloaded or imported. It has the 218,000 JMdict entries
+with English meanings and, for about 4,800 of them (about 12% of the common words), Portuguese (Brazil)
+meanings from the Portuguese Wiktionary. In **Settings → Dictionary** you choose the language of the meanings:
+Portuguese shows the Portuguese meaning first and the English ones after it; words with no Portuguese meaning
+only have English. (There is no complete Japanese→Portuguese dictionary under a free license; this is the best
+open source that exists.)
 
 ## Develop
 
@@ -106,10 +109,12 @@ screenshot, mouse move). More in [docs/PROGRESS.md](docs/PROGRESS.md).
 | [MeikiOCR](https://github.com/rtr46/meikiocr) models ([detection](https://huggingface.co/rtr46/meiki.text.detect.v0), [recognition](https://huggingface.co/rtr46/meiki.txt.recognition.v0)) | Text recognition; the pipeline was ported to Rust | Code Apache-2.0; models LGPL-3.0 (per their model cards) |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) 1.31 | Runs the OCR models | MIT |
 | [Lindera](https://github.com/lindera/lindera) with UniDic | Japanese tokenizer | MIT; UniDic has its own license |
-| [JMdict](https://www.edrdg.org/jmdict/j_jmdict.html) via [jmdict-simplified](https://github.com/scriptin/jmdict-simplified) | Dictionary (not included, downloaded by the user) | CC BY-SA 4.0 |
+| [JMdict](https://www.edrdg.org/jmdict/j_jmdict.html) via [jmdict-simplified](https://github.com/scriptin/jmdict-simplified) | Dictionary, bundled in the app (English meanings) | CC BY-SA 4.0 |
+| [Portuguese Wiktionary](https://pt.wiktionary.org) via [kaikki.org](https://kaikki.org/ptwiktionary/) (`data/ptwiktionary-ja.jsonl.gz`) | Portuguese meanings, bundled in the app | CC BY-SA 4.0 and GFDL |
 | [Tauri](https://tauri.app) | App framework | MIT / Apache-2.0 |
 
 The models and the ONNX Runtime library are not stored in this repository; `scripts/fetch-ocr-models.sh`
-downloads them. The app icon is original artwork (a star, not the Anki logo, which is a trademark).
+downloads them. The bundled dictionary file is built by `scripts/build-dictionary.sh` (`scripts/dev.sh appimage`
+does it when it is missing). The app icon is original artwork (a star, not the Anki logo, which is a trademark).
 
 No license has been chosen for this project's own code yet.

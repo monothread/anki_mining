@@ -21,7 +21,7 @@ use crate::audio::{AudioBuffer, AudioRecorder, BUFFER_SECONDS};
 use crate::capture::{Region, X11Capture};
 use crate::cards::CardInput;
 use crate::config::{Config, ConfigFile, MiningSettings};
-use crate::dictionary::{Dictionary, ImportStats, ScanResult};
+use crate::dictionary::{install_bundled, Dictionary, ImportStats, ScanResult};
 use crate::hover::trigger::TriggerMode;
 use crate::hover::{card_input, HoverMemory};
 use crate::normalizer::Normalizer;
@@ -39,6 +39,10 @@ use self::state::{AppState, Startup, Status};
 
 const CONFIG_FILE: &str = "config.json";
 const DICTIONARY_FILE: &str = "jmdict.db";
+/// Folder (inside the bundled resources) that holds the dictionary.
+const DICTIONARY_RESOURCE_DIR: &str = "dictionary";
+/// Overrides where the bundled dictionary is looked for (development builds have no resources).
+const DICTIONARY_DIR_VARIABLE: &str = "ANKI_MINING_DICTIONARY_DIR";
 const SENTENCE_EVENT: &str = "sentence";
 const MINE_EVENT: &str = "mine-hotkey";
 const MINE_RESULT_EVENT: &str = "mine-result";
@@ -380,7 +384,11 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     let config_path = config_dir.join(CONFIG_FILE);
     let (config, config_loaded) = load_config(&config_path, &mut warnings);
-    let dictionary = Dictionary::open(&data_dir.join(DICTIONARY_FILE))?;
+    let dictionary_path = data_dir.join(DICTIONARY_FILE);
+    if let Err(reason) = install_bundled_dictionary(app, &dictionary_path) {
+        warnings.push(reason);
+    }
+    let dictionary = Dictionary::open(&dictionary_path)?;
     let tokenizer = Arc::new(Tokenizer::new()?);
 
     let (sender, receiver) = mpsc::channel::<TextSourceEvent>();
@@ -538,6 +546,28 @@ fn find_ocr_directory(app: &AppHandle) -> Result<PathBuf, String> {
             candidate.display()
         ))
     }
+}
+
+/// Puts the dictionary that comes with the app in the data folder when there is none there.
+fn install_bundled_dictionary(app: &AppHandle, target: &Path) -> Result<(), String> {
+    let directory = match std::env::var_os(DICTIONARY_DIR_VARIABLE) {
+        Some(directory) => PathBuf::from(directory),
+        None => app
+            .path()
+            .resource_dir()
+            .map_err(|error| error.to_string())?
+            .join(DICTIONARY_RESOURCE_DIR),
+    };
+    let bundled = directory.join(DICTIONARY_FILE);
+    if !bundled.is_file() {
+        return Err(format!(
+            "The bundled dictionary is missing ({}); import one in the setup box",
+            bundled.display()
+        ));
+    }
+    install_bundled(&bundled, target)
+        .map(|_| ())
+        .map_err(|error| format!("Could not install the bundled dictionary: {error}"))
 }
 
 /// Starts the screen-reading source; it stays idle until a region is selected.
