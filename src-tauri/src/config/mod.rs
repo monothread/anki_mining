@@ -162,7 +162,9 @@ pub enum DuplicatePolicy {
 /// the name of a named pipe (`mpvsocket`) or the path of one (`\\.\pipe\mpvsocket`).
 pub fn is_valid_mpv_socket(socket: &str, windows: bool) -> bool {
     if !windows {
-        return Path::new(socket).is_absolute();
+        // A plain text check: `Path::is_absolute` would call this path relative when the program
+        // itself runs on Windows (as the tests of the Linux rule do).
+        return socket.starts_with('/');
     }
     let bare_name = !socket.contains('/') && !socket.contains('\\');
     bare_name || socket.starts_with(r"\\.\pipe\")

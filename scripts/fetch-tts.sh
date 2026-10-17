@@ -100,7 +100,7 @@ if [ "${PLATFORM}" = "windows" ]; then
     cp "${CORE}/onnxruntime/lib/voicevox_onnxruntime.dll" "${TARGET}/"
     # mingw-w64's linker links against the DLL itself.
     "${MINGW_GCC}" -O2 -Wall -o "${TARGET}/voicevox_say.exe" "${ROOT}/tools/tts/voicevox_say.c" \
-        -I"${CORE}/c_api/include" -L"${TARGET}" -lvoicevox_core
+        -I"${CORE}/c_api/include" -L"${TARGET}" -lvoicevox_core -lshell32
     test -s "${TARGET}/voicevox_say.exe"
     du -sh "${TARGET}"
     exit 0

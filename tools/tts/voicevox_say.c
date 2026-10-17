@@ -13,6 +13,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
 #define SEPARATOR "\\"
 #define RUNTIME_PREFIX "voicevox_onnxruntime.dll"
 #else
@@ -24,6 +25,27 @@
 #include "voicevox_core.h"
 
 typedef int (*FileVisitor)(const char *name, void *context);
+
+#ifdef _WIN32
+/* On Windows the arguments of `main` are in the ANSI code page, which cannot hold Japanese text
+ * (or a user name with accents in a path). Everything is converted to and from UTF-8 instead,
+ * which is what VOICEVOX expects. */
+static char *to_utf8(const wchar_t *wide) {
+    int size = WideCharToMultiByte(CP_UTF8, 0, wide, -1, NULL, 0, NULL, NULL);
+    char *text = malloc(size > 0 ? (size_t)size : 1);
+    if (size > 0) WideCharToMultiByte(CP_UTF8, 0, wide, -1, text, size, NULL, NULL);
+    else text[0] = 0;
+    return text;
+}
+
+static wchar_t *to_wide(const char *utf8) {
+    int size = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
+    wchar_t *text = malloc((size > 0 ? (size_t)size : 1) * sizeof(wchar_t));
+    if (size > 0) MultiByteToWideChar(CP_UTF8, 0, utf8, -1, text, size);
+    else text[0] = 0;
+    return text;
+}
+#endif
 
 static int fail(const char *step, VoicevoxResultCode code) {
     fprintf(stderr, "%s: %s\n", step, voicevox_error_result_to_message(code));
@@ -39,16 +61,20 @@ static int path_join(char *out, size_t size, const char *a, const char *b) {
 static int for_each_file(const char *dir, FileVisitor visitor, void *context) {
 #ifdef _WIN32
     char pattern[4096];
-    WIN32_FIND_DATAA found;
+    WIN32_FIND_DATAW found;
     if (path_join(pattern, sizeof pattern, dir, "*")) return -1;
-    HANDLE handle = FindFirstFileA(pattern, &found);
+    wchar_t *wide_pattern = to_wide(pattern);
+    HANDLE handle = FindFirstFileW(wide_pattern, &found);
+    free(wide_pattern);
     if (handle == INVALID_HANDLE_VALUE) return -1;
     int result = 0;
     do {
         if (!(found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            result = visitor(found.cFileName, context);
+            char *name = to_utf8(found.cFileName);
+            result = visitor(name, context);
+            free(name);
         }
-    } while (result == 0 && FindNextFileA(handle, &found));
+    } while (result == 0 && FindNextFileW(handle, &found));
     FindClose(handle);
     return result;
 #else
@@ -123,6 +149,16 @@ static int load_models(const VoicevoxSynthesizer *synthesizer, const char *dir) 
 }
 
 int main(int argc, char **argv) {
+#ifdef _WIN32
+    int wide_count = 0;
+    wchar_t **wide = CommandLineToArgvW(GetCommandLineW(), &wide_count);
+    if (wide) {
+        argv = malloc(((size_t)wide_count + 1) * sizeof(char *));
+        for (int index = 0; index < wide_count; index++) argv[index] = to_utf8(wide[index]);
+        argv[wide_count] = NULL;
+        argc = wide_count;
+    }
+#endif
     int listing = argc == 3 && strcmp(argv[2], "list") == 0;
     if (!listing && argc != 5) {
         fprintf(stderr, "usage: voicevox_say <dir> <style id> <text> <output.wav> | <dir> list\n");
@@ -166,7 +202,13 @@ int main(int argc, char **argv) {
     code = voicevox_synthesizer_tts(synthesizer, argv[3], (VoicevoxStyleId)atoi(argv[2]), tts, &length, &wav);
     if (code != VOICEVOX_RESULT_OK) return fail("tts", code);
 
+#ifdef _WIN32
+    wchar_t *wide_output = to_wide(argv[4]);
+    FILE *out = _wfopen(wide_output, L"wb");
+    free(wide_output);
+#else
     FILE *out = fopen(argv[4], "wb");
+#endif
     if (!out || fwrite(wav, 1, length, out) != length) {
         fprintf(stderr, "cannot write %s\n", argv[4]);
         return 1;
