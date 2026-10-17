@@ -218,7 +218,17 @@ impl AppState {
                     seconds,
                 )
             });
-        let clip = exact.or_else(|| buffer.clip(seconds))?;
+        // Without a subtitle to tell which sound is the sentence's, "the last thing that played"
+        // may be anything (another video, a card played in Anki), so it is only used when there
+        // is no synthesized voice to read the sentence instead.
+        let voice_reads_the_sentence = config.tts_on_cards && self.speaker.is_some();
+        let clip = exact.or_else(|| {
+            if voice_reads_the_sentence {
+                None
+            } else {
+                buffer.clip(seconds)
+            }
+        })?;
         Some(audio_file(&clip, now_millis()))
     }
 
@@ -1582,5 +1592,124 @@ mod tests {
         state.mine(&input(), Some("own")).expect("note");
 
         assert_eq!(actions(&mock), vec!["addNote"]);
+    }
+
+    #[test]
+    fn the_last_sound_that_played_is_not_taken_for_the_sentence_when_the_voice_can_read_it() {
+        let mock = MockAnki::start(vec![
+            ok(json!(["AnkiMining"])),
+            fields_reply(),
+            ok(json!({})),
+            ok(json!(5)),
+        ]);
+        let audio = crate::audio::AudioBuffer::shared(60);
+        // Something that played earlier, such as the audio of another card.
+        audio.lock().expect("audio").push(&vec![4000_i16; 16_000]);
+        let speaker = FakeSpeaker::new(None);
+        let state = spoken_state(&mock, &speaker, Config::default()).with_audio(audio);
+        let memory = HoverMemory::default();
+        remembered(&memory);
+
+        state.mine_from_hover(&memory, 0, 0).expect("note");
+
+        assert_eq!(
+            speaker.said(),
+            vec!["ねこ".to_string(), "私は猫が好き".to_string()]
+        );
+        let audio = mock.requests()[3]["params"]["note"]["audio"].clone();
+        let names: Vec<String> = audio
+            .as_array()
+            .expect("audio")
+            .iter()
+            .map(|file| file["filename"].as_str().expect("name").to_string())
+            .collect();
+        assert_eq!(names.len(), 2);
+        assert!(
+            names
+                .iter()
+                .all(|name| name.starts_with("anki-mining-word-")
+                    || name.starts_with("anki-mining-sentence-")),
+            "{names:?}"
+        );
+    }
+
+    #[test]
+    fn the_exact_recording_of_the_subtitle_is_still_used_and_only_the_word_is_spoken() {
+        let mock = MockAnki::start(vec![
+            ok(json!(["AnkiMining"])),
+            fields_reply(),
+            ok(json!({})),
+            ok(json!(5)),
+        ]);
+        let audio = crate::audio::AudioBuffer::shared(60);
+        let now = Instant::now();
+        audio
+            .lock()
+            .expect("audio")
+            .push_at(&vec![4000_i16; 16_000 * 2], now);
+        let clock = SubtitleClock::default();
+        clock.begin("私は猫が好き", now - std::time::Duration::from_secs(2));
+        let speaker = FakeSpeaker::new(None);
+        let state = spoken_state(&mock, &speaker, Config::default())
+            .with_audio(audio)
+            .with_subtitles(clock);
+        let memory = HoverMemory::default();
+        remembered(&memory);
+
+        state.mine_from_hover(&memory, 0, 0).expect("note");
+
+        assert_eq!(speaker.said(), vec!["ねこ".to_string()]);
+        let audio = mock.requests()[3]["params"]["note"]["audio"].clone();
+        let fields: Vec<serde_json::Value> = audio
+            .as_array()
+            .expect("audio")
+            .iter()
+            .map(|file| file["fields"].clone())
+            .collect();
+        assert_eq!(fields.len(), 2);
+        assert!(fields.contains(&json!(["SentenceAudio"])));
+        assert!(fields.contains(&json!(["WordAudio"])));
+    }
+
+    #[test]
+    fn two_cards_in_a_row_do_not_share_audio() {
+        let mock = MockAnki::start(vec![
+            ok(json!(["AnkiMining"])),
+            fields_reply(),
+            ok(json!({})),
+            ok(json!(5)),
+            ok(json!(6)),
+        ]);
+        let speaker = FakeSpeaker::new(None);
+        let state = spoken_state(&mock, &speaker, Config::default());
+        let other = CardInput {
+            entry: Entry {
+                expression: "体験".to_string(),
+                reading: "たいけん".to_string(),
+                ..input().entry
+            },
+            sentence: "体験してみた".to_string(),
+            ..input()
+        };
+
+        state.mine(&input(), None).expect("first");
+        state.mine(&other, None).expect("second");
+
+        let requests = mock.requests();
+        let data = |index: usize, field: &str| -> Vec<u8> {
+            let files = requests[index]["params"]["note"]["audio"].clone();
+            let file = files
+                .as_array()
+                .expect("audio")
+                .iter()
+                .find(|file| file["fields"] == json!([field]))
+                .expect("file")
+                .clone();
+            decode(&file["data"])
+        };
+        assert_eq!(data(3, "WordAudio"), "RIFFねこ".as_bytes());
+        assert_eq!(data(4, "WordAudio"), "RIFFたいけん".as_bytes());
+        assert_eq!(data(3, "SentenceAudio"), "RIFF猫が好き".as_bytes());
+        assert_eq!(data(4, "SentenceAudio"), "RIFF体験してみた".as_bytes());
     }
 }
