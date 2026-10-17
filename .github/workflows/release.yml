@@ -1,0 +1,37 @@
+name: Release
+
+# Builds the AppImage when a version tag is pushed (git tag v0.2.0 && git push --tags) and
+# attaches it, with its checksum, to a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the dev image
+        run: scripts/dev.sh image
+      - name: Install the frontend dependencies
+        run: scripts/dev.sh install
+      - name: Download the OCR models and the ONNX Runtime library
+        run: scripts/dev.sh exec scripts/fetch-ocr-models.sh
+      - name: Test
+        run: scripts/dev.sh test
+      - name: Build the AppImage (also builds the bundled dictionary)
+        run: scripts/dev.sh appimage
+      - name: Checksum
+        run: |
+          cd dist
+          sha256sum *.AppImage > SHA256SUMS
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.AppImage
+            dist/SHA256SUMS
+          generate_release_notes: true

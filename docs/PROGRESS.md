@@ -16,7 +16,7 @@
 | 3 | Screen OCR + hover lookup (core) | First version done and verified on the real desktop (YouTube, TV banner) and headless; P3-05 (preprocessing) open and optional |
 | 4 | mpv exact subtitles (no browser extension, user decision) | Done (P4-05 AT-SPI evaluated and not built, ADR-014) |
 | 5 | Profiles and decks per source | Done |
-| 6 | Polish (pitch, frequency, packaging) | Not started |
+| 6 | Polish (pitch, frequency, packaging) | Done except Wayland and Flatpak (ADR-016) |
 
 Legend: Not started · In progress · Blocked · Done
 
@@ -113,8 +113,13 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 | 2026-10-17 | Tray fix: the icon created from the Settings command (a non-main thread) never showed, so a hidden window could not be reopened. The icon is now created on the main thread, and the window is hidden on close only when the icon exists (otherwise the app quits). Checked on the real desktop (Cinnamon, `xapp-sn-watcher`): the item registers as Active when the app starts with `closeToTray`; the UI toggle path was checked headless (log `tray: icon created`) | — |
 | 2026-10-17 | ADR-013: bundled dictionary (no import step): `scripts/build-dictionary.sh`, example `build_dictionary`, table `meta`, `install_bundled` at start (legacy/empty/older bundled replaced, custom kept). A Portuguese (Brazil) layer from the Portuguese Wiktionary was built and then removed at the user's request (12% coverage); `BUNDLE_VERSION` 2 replaces copies that had it | — |
 | 2026-10-17 | P6-01/P6-02 (ADR-015): tables `pitch` and `frequency` (Kanjium accents.txt 124k rows, Tatoeba-based frequency 18k words), `Entry.pitch`, Yomitan zip importer for `term_meta_bank` (`import_yomitan` command, Settings → Dictionary), popup draws pitch over the moras with `[n]` and `#rank`, cards fill `Pitch` and `Frequency`. Checked in the hover e2e (popup shows `[3]`, `#337`). 585 Rust + 158 Vitest tests | P6-01, P6-02 |
+| 2026-10-17 | P6-04 and P6-03 (ADR-016): `.github/workflows/ci.yml` (type check, lint, tests on every push) and `release.yml` (tag `v*` builds the AppImage with the bundled dictionary and attaches it with SHA256SUMS to a GitHub release). The workflows could not be run here (only their YAML was parsed). Wayland and Flatpak left undone: no environment to check them in | P6-04 |
 
 ## Backlog (ideas outside the current scope)
+- Wayland backends (portal screen capture, pointer, popup placement) and a Flatpak manifest: need a machine that runs them (ADR-016).
+- Pitch accent for words missing from Kanjium; a larger and less conversational frequency source if one with a free license appears.
+- Japanese→Portuguese meanings: no free source of useful size was found (a 12% layer from the Portuguese Wiktionary was built and removed at the user's request).
+- Try the Anki flow against a real Anki; choose a project license; publish the first release (push a `v*` tag).
 - Visual signal when a word is identified. Decided to leave it as is (the popup is the signal). The cursor shape cannot be changed over other apps' windows on X11; if wanted later, the clean option is a click-through highlight frame over the word, the alternatives (pointer grab, an input-capturing window) block clicks.
 - Support for languages other than Japanese.
 - Card review inside the app.

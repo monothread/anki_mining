@@ -27,6 +27,11 @@ decide when it is used: the application (its window class, e.g. `mpv` or `Naviga
 wins; the default profile is used when none matches. You can also choose whether the card is refused or added
 again when it already exists in the deck. **Keep running in the system tray** makes the close button hide the window instead of quitting; use the tray menu to quit.
 
+## Releases
+
+Pushing a tag like `v0.2.0` makes GitHub Actions (`.github/workflows/release.yml`) build the AppImage and attach it,
+with a `SHA256SUMS` file, to a release. The app needs an X11 session; Wayland is not supported yet.
+
 ## How it works
 
 ```

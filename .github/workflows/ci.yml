@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the dev image
+        run: scripts/dev.sh image
+      - name: Install the frontend dependencies
+        run: scripts/dev.sh install
+      - name: Download the OCR models and the ONNX Runtime library
+        run: scripts/dev.sh exec scripts/fetch-ocr-models.sh
+      - name: Type check
+        run: scripts/dev.sh typecheck
+      - name: Lint
+        run: scripts/dev.sh lint
+      - name: Test
+        run: scripts/dev.sh test
