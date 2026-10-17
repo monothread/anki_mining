@@ -1,9 +1,10 @@
 name: CI
 
+# Pull requests and by hand only: everyday work is checked on the developer's machine with
+# scripts/dev.sh and scripts/win.sh, so a push does not start a run.
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   check:

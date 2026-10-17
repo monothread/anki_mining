@@ -27,6 +27,8 @@ run_in_container() {
     docker run --rm --init \
         --user "$(id -u):$(id -g)" \
         --env HOME=/cache/home \
+        --env TAURI_SIGNING_PRIVATE_KEY \
+        --env TAURI_SIGNING_PRIVATE_KEY_PASSWORD \
         --volume "${ROOT}:/workspace" \
         --volume "${CACHE_DIR}:/cache" \
         --workdir /workspace \
@@ -57,7 +59,9 @@ case "${command}" in
         run_in_container xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24 -noreset" bash -c "npm test && cargo test --manifest-path src-tauri/Cargo.toml -- --include-ignored"
         ;;
     appimage)
-        run_in_container bash -c '[ -f src-tauri/resources/dictionary/jmdict.db ] || scripts/build-dictionary.sh; npx tauri build --bundles appimage && for file in src-tauri/target/release/bundle/appimage/*.AppImage; do name="$(basename "$file")"; cp "$file" "dist/${name}.part" && mv -f "dist/${name}.part" "dist/${name}"; done'
+        # With TAURI_SIGNING_PRIVATE_KEY set (a release build) the build also makes the signature
+        # that the updater of the app checks.
+        run_in_container bash -c '[ -f src-tauri/resources/dictionary/jmdict.db ] || scripts/build-dictionary.sh; extra=(); if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then extra=(--config "{\"bundle\":{\"createUpdaterArtifacts\":true}}"); fi; npx tauri build --bundles appimage "${extra[@]}" && for file in src-tauri/target/release/bundle/appimage/*.AppImage src-tauri/target/release/bundle/appimage/*.AppImage.sig; do [ -f "$file" ] || continue; name="$(basename "$file")"; cp "$file" "dist/${name}.part" && mv -f "dist/${name}.part" "dist/${name}"; done'
         ;;
     exec)
         run_in_container "$@"
