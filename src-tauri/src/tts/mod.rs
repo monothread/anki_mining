@@ -14,7 +14,11 @@ use thiserror::Error;
 use crate::cards::MediaFile;
 
 /// File name of the helper inside the TTS resources folder.
+#[cfg(unix)]
 pub const HELPER: &str = "voicevox_say";
+/// File name of the helper inside the TTS resources folder.
+#[cfg(windows)]
+pub const HELPER: &str = "voicevox_say.exe";
 /// The voice used when none is chosen: 春日部つむぎ (ノーマル).
 pub const DEFAULT_STYLE_ID: u32 = 8;
 /// Credit the VOICEVOX terms of use ask for.
@@ -38,7 +42,7 @@ pub enum TtsError {
     NoSound,
     #[error("there is nothing to say")]
     EmptyText,
-    #[error("no program to play sound was found (paplay, pw-play or aplay)")]
+    #[error("no program to play sound was found (on Linux: paplay, pw-play or aplay)")]
     NoPlayer,
 }
 
@@ -87,6 +91,7 @@ impl VoicevoxSpeaker {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
+        hide_console_window(&mut command);
         command
     }
 
@@ -148,10 +153,26 @@ impl VoicevoxSpeaker {
     }
 }
 
+/// Keeps Windows from flashing a console window when a helper program is started.
+#[cfg(windows)]
+pub fn hide_console_window(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+/// Keeps Windows from flashing a console window when a helper program is started (nothing to do
+/// on other systems).
+#[cfg(not(windows))]
+pub fn hide_console_window(_command: &mut Command) {}
+
 /// Programs that can play a WAV file, in order of preference, with the arguments they need.
+#[cfg(unix)]
 const PLAYERS: [(&str, &[&str]); 3] = [("paplay", &[]), ("pw-play", &[]), ("aplay", &["-q"])];
 
 /// The first player found in the directories of `path` (a `PATH`-style list).
+#[cfg(unix)]
 pub fn find_player(path: &std::ffi::OsStr) -> Option<(PathBuf, &'static [&'static str])> {
     let directories: Vec<PathBuf> = std::env::split_paths(path).collect();
     PLAYERS.iter().find_map(|(name, arguments)| {
@@ -164,6 +185,7 @@ pub fn find_player(path: &std::ffi::OsStr) -> Option<(PathBuf, &'static [&'stati
 }
 
 /// Plays a WAV on the speakers without waiting for it to end.
+#[cfg(unix)]
 pub fn play_wav(wav: &[u8]) -> Result<(), TtsError> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let (player, arguments) = find_player(&path).ok_or(TtsError::NoPlayer)?;
@@ -182,6 +204,28 @@ pub fn play_wav(wav: &[u8]) -> Result<(), TtsError> {
         })?;
     thread::spawn(move || {
         let _ = child.wait();
+        let _ = std::fs::remove_file(&file);
+    });
+    Ok(())
+}
+
+/// Plays a WAV on the speakers without waiting for it to end.
+#[cfg(windows)]
+pub fn play_wav(wav: &[u8]) -> Result<(), TtsError> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr::null_mut;
+
+    use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_FILENAME, SND_SYNC};
+
+    let file = VoicevoxSpeaker::output_path();
+    std::fs::write(&file, wav).map_err(|error| TtsError::Spawn(error.to_string()))?;
+    thread::spawn(move || {
+        let path: Vec<u16> = file.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: `path` is a NUL-terminated wide string that outlives the call, which waits for
+        // the sound to end (SND_SYNC) before the file is removed.
+        unsafe {
+            PlaySoundW(path.as_ptr(), null_mut(), SND_FILENAME | SND_SYNC);
+        }
         let _ = std::fs::remove_file(&file);
     });
     Ok(())
@@ -210,7 +254,7 @@ pub fn speech_file(wav: &[u8], kind: &str, timestamp_ms: u64) -> MediaFile {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
 

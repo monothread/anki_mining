@@ -1,6 +1,9 @@
 //! Mouse cursor position and modifier keys, behind a trait so the X11 backend can be replaced
 //! by a Wayland one later (ADR-003).
 
+#[cfg(windows)]
+pub mod windows;
+#[cfg(target_os = "linux")]
 pub mod x11;
 
 use thiserror::Error;
@@ -8,7 +11,17 @@ use thiserror::Error;
 use crate::capture::Region;
 use crate::hover::trigger::TriggerKey;
 
+#[cfg(windows)]
+pub use windows::WindowsPointer;
+#[cfg(target_os = "linux")]
 pub use x11::X11Pointer;
+
+/// The pointer backend of the system the app runs on.
+#[cfg(windows)]
+pub type SystemPointer = WindowsPointer;
+/// The pointer backend of the system the app runs on.
+#[cfg(target_os = "linux")]
+pub type SystemPointer = X11Pointer;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum PointerError {

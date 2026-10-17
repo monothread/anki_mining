@@ -15,7 +15,11 @@ use super::pipeline::{
 use super::{OcrEngine, OcrError, OcrLine};
 
 /// Name of the ONNX Runtime shared library inside the OCR resources directory.
+#[cfg(unix)]
 pub const RUNTIME_LIBRARY: &str = "libonnxruntime.so";
+/// The ONNX Runtime library that is loaded at run time (it is bundled next to the models).
+#[cfg(windows)]
+pub const RUNTIME_LIBRARY: &str = "onnxruntime.dll";
 pub const DETECTION_MODEL: &str = "meiki.text.detect.v0.1.960x544.onnx";
 pub const RECOGNITION_MODEL: &str = "meiki.text.rec.v0.960x32.onnx";
 /// Reads vertical columns of text (beta quality). Optional: without it, columns are skipped.

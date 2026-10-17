@@ -1,11 +1,15 @@
 //! Sentence audio for cards. The user pauses the video before looking a word up, so the sound has
 //! to be recorded beforehand: the default output (its monitor) is recorded all the time into a
-//! circular buffer and the last spoken seconds are cut out when a card is made.
+//! circular buffer and the last spoken seconds are cut out when a card is made. On Linux the
+//! recorder is `parec` (PulseAudio and PipeWire); on Windows the default output is captured with
+//! WASAPI loopback.
 
 use std::collections::VecDeque;
 use std::io::Read;
+#[cfg(unix)]
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
+#[cfg(unix)]
 use std::thread;
 use std::time::Instant;
 
@@ -208,7 +212,59 @@ pub fn feed_from_reader(reader: &mut dyn Read, buffer: &SharedAudio) {
     }
 }
 
+/// Turns interleaved samples of any channel count and rate (what a sound card gives) into the mono
+/// 16 kHz samples of the buffer, keeping what it needs between calls so chunks join smoothly.
+pub struct MonoResampler {
+    channels: usize,
+    /// How many input samples go by for each output sample.
+    step: f64,
+    /// Where the next output sample is, counted from the start of the next chunk (the last sample
+    /// of the previous chunk is at -1).
+    position: f64,
+    last: f32,
+}
+
+impl MonoResampler {
+    pub fn new(channels: usize, input_rate: u32) -> MonoResampler {
+        MonoResampler {
+            channels: channels.max(1),
+            step: f64::from(input_rate.max(1)) / f64::from(SAMPLE_RATE),
+            position: 0.0,
+            last: 0.0,
+        }
+    }
+
+    /// The mono 16 kHz samples that `interleaved` (frames of `channels` samples in -1.0..=1.0) adds.
+    pub fn push(&mut self, interleaved: &[f32]) -> Vec<i16> {
+        let mono: Vec<f32> = interleaved
+            .chunks_exact(self.channels)
+            .map(|frame| frame.iter().sum::<f32>() / self.channels as f32)
+            .collect();
+        let Some(newest) = mono.last().copied() else {
+            return Vec::new();
+        };
+        let mut out = Vec::with_capacity((mono.len() as f64 / self.step) as usize + 1);
+        while self.position < (mono.len() - 1) as f64 {
+            let index = self.position.floor();
+            let before = if index < 0.0 {
+                self.last
+            } else {
+                mono[index as usize]
+            };
+            let after = mono[(index + 1.0) as usize];
+            let fraction = (self.position - index) as f32;
+            let value = before + (after - before) * fraction;
+            out.push((value * 32767.0).round().clamp(-32768.0, 32767.0) as i16);
+            self.position += self.step;
+        }
+        self.position -= mono.len() as f64;
+        self.last = newest;
+        out
+    }
+}
+
 /// The command that records what the computer plays (PulseAudio and PipeWire's Pulse layer).
+#[cfg(unix)]
 pub fn recorder_command() -> Command {
     let mut command = Command::new("parec");
     command
@@ -226,10 +282,12 @@ pub fn recorder_command() -> Command {
 }
 
 /// Keeps the recorder running and the buffer filled; the recorder stops with this value.
+#[cfg(unix)]
 pub struct AudioRecorder {
     child: Child,
 }
 
+#[cfg(unix)]
 impl AudioRecorder {
     pub fn start(buffer: SharedAudio) -> Result<AudioRecorder, AudioError> {
         AudioRecorder::start_with(recorder_command(), buffer)
@@ -253,12 +311,18 @@ impl AudioRecorder {
     }
 }
 
+#[cfg(unix)]
 impl Drop for AudioRecorder {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
+
+#[cfg(windows)]
+mod loopback;
+#[cfg(windows)]
+pub use loopback::AudioRecorder;
 
 #[cfg(test)]
 mod tests {
@@ -430,6 +494,7 @@ mod tests {
         assert_eq!(stored, vec![5]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_recorder_command_records_the_default_output_as_mono_16_khz() {
         let command = recorder_command();
@@ -451,6 +516,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_missing_recorder_is_reported_with_its_name() {
         let result = AudioRecorder::start_with(
@@ -466,6 +532,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_recorder_fills_the_buffer_from_the_program_output() {
         let mut command = Command::new("printf");
@@ -581,5 +648,63 @@ mod tests {
         let now = Instant::now();
 
         assert_eq!(buffer.clip_between(now, now, 5), None);
+    }
+
+    #[test]
+    fn a_resampler_halves_the_rate_of_a_32_khz_signal_and_keeps_its_level() {
+        let mut resampler = MonoResampler::new(1, 32_000);
+
+        let out = resampler.push(&vec![0.5_f32; 3_200]);
+
+        assert!((1_599..=1_601).contains(&out.len()), "{}", out.len());
+        assert!(out.iter().all(|sample| (*sample - 16_384).abs() <= 1));
+    }
+
+    #[test]
+    fn a_resampler_averages_the_channels() {
+        let mut resampler = MonoResampler::new(2, 16_000);
+        let frames: Vec<f32> = (0..100).flat_map(|_| [1.0_f32, -1.0_f32]).collect();
+
+        let out = resampler.push(&frames);
+
+        assert!(out.iter().all(|sample| *sample == 0));
+        assert!(out.len() >= 98);
+    }
+
+    #[test]
+    fn a_resampler_clamps_what_goes_beyond_full_scale() {
+        let mut resampler = MonoResampler::new(1, 16_000);
+
+        let out = resampler.push(&[2.0, 2.0, -2.0, -2.0]);
+
+        assert!(out.contains(&32_767));
+        assert!(out.iter().all(|sample| *sample >= -32_768));
+    }
+
+    #[test]
+    fn chunks_pushed_one_after_the_other_give_the_same_sound_as_one_big_chunk() {
+        let signal: Vec<f32> = (0..4_800)
+            .map(|index| (index as f32 / 40.0).sin() * 0.8)
+            .collect();
+        let mut whole = MonoResampler::new(1, 48_000);
+        let together = whole.push(&signal);
+        let mut parts = MonoResampler::new(1, 48_000);
+        let mut apart = Vec::new();
+        for chunk in signal.chunks(480) {
+            apart.extend(parts.push(chunk));
+        }
+
+        assert!(together.len().abs_diff(apart.len()) <= 1);
+        for (left, right) in together.iter().zip(&apart) {
+            assert!((i32::from(*left) - i32::from(*right)).abs() <= 2);
+        }
+    }
+
+    #[test]
+    fn an_empty_chunk_gives_nothing_and_a_partial_frame_is_ignored() {
+        let mut resampler = MonoResampler::new(2, 16_000);
+
+        assert!(resampler.push(&[]).is_empty());
+        assert!(resampler.push(&[0.3]).is_empty());
     }
 }

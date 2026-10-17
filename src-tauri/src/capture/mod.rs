@@ -1,13 +1,39 @@
 //! Screen capture behind a trait, so the X11 backend can be replaced by a Wayland one later
-//! (ADR-003).
+//! (ADR-003). Windows has its own backend (GDI).
 
+#[cfg(windows)]
+pub mod windows;
+#[cfg(target_os = "linux")]
 pub mod x11;
 
 use image::RgbImage;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+#[cfg(windows)]
+pub use windows::WindowsCapture;
+#[cfg(target_os = "linux")]
 pub use x11::X11Capture;
+
+/// The capture backend of the system the app runs on.
+#[cfg(windows)]
+pub type SystemCapture = WindowsCapture;
+/// The capture backend of the system the app runs on.
+#[cfg(target_os = "linux")]
+pub type SystemCapture = X11Capture;
+
+/// Where the top-left corner of the screen the app captures is in the coordinates of the windows
+/// (`(0, 0)` unless a monitor lies left of or above the main one, as on Windows).
+#[cfg(windows)]
+pub fn screen_origin() -> (i32, i32) {
+    windows::virtual_screen().origin
+}
+
+/// Where the top-left corner of the screen the app captures is in the coordinates of the windows.
+#[cfg(not(windows))]
+pub fn screen_origin() -> (i32, i32) {
+    (0, 0)
+}
 
 /// A rectangle of the screen in pixels; `x` and `y` are measured from the top-left corner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

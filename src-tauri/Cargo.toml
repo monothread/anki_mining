@@ -23,13 +23,27 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 tungstenite = "0.30"
 arboard = { version = "3", default-features = false }
 regex = "1"
-x11rb = "0.13"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 base64 = "0.22"
 ort = { version = "=2.0.0-rc.14", default-features = false, features = ["std", "load-dynamic", "api-31"] }
 ureq = { version = "3", default-features = false, features = ["json"] }
 unicode-normalization = "0.1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+cpal = "0.15"
 
 [dev-dependencies]
 tempfile = "3"

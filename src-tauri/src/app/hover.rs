@@ -11,7 +11,7 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
 };
 
-use crate::capture::{Region, ScreenCapture, X11Capture};
+use crate::capture::{screen_origin, Region, ScreenCapture, SystemCapture};
 use crate::config::{Config, ConfigFile};
 use crate::hover::placement::{popup_position, popup_position_beside, Rect};
 use crate::hover::trigger::{PointerSample, Trigger, TriggerKey, TriggerMode};
@@ -19,7 +19,7 @@ use crate::hover::{is_word, lookup_in, HoverMemory, LookupOutcome};
 use crate::media::crop_to_region;
 use crate::ocr::{MeikiEngine, OcrEngine};
 use crate::pointer::WindowIdentity;
-use crate::pointer::{PointerTracker, X11Pointer};
+use crate::pointer::{PointerTracker, SystemPointer};
 use crate::sources::now_millis;
 use crate::tokenizer::Tokenizer;
 use crate::types::token::Token;
@@ -163,8 +163,8 @@ pub fn spawn(
 ) {
     thread::spawn(move || {
         let parts = (
-            X11Pointer::connect().map_err(|error| error.to_string()),
-            X11Capture::connect().map_err(|error| error.to_string()),
+            SystemPointer::connect().map_err(|error| error.to_string()),
+            SystemCapture::connect().map_err(|error| error.to_string()),
             MeikiEngine::from_directory(&ocr_dir).map_err(|error| error.to_string()),
         );
         match parts {
@@ -199,8 +199,8 @@ fn watch(
     app: &AppHandle,
     control: &HoverControl,
     tokenizer: &Tokenizer,
-    mut pointer: X11Pointer,
-    mut capture: X11Capture,
+    mut pointer: SystemPointer,
+    mut capture: SystemCapture,
     mut engine: MeikiEngine,
 ) {
     let mut shown: Option<Shown> = None;
@@ -262,7 +262,7 @@ fn watch(
 fn look_up(
     app: &AppHandle,
     tokenizer: &Tokenizer,
-    capture: &mut X11Capture,
+    capture: &mut SystemCapture,
     engine: &mut MeikiEngine,
     cursor: (i32, i32),
     (window, identity): (Option<Region>, WindowIdentity),
@@ -360,10 +360,11 @@ fn is_over_app_window(app: &AppHandle, cursor: (i32, i32)) -> bool {
         if window.label() == POPUP_LABEL || !window.is_visible().unwrap_or(false) {
             return false;
         }
+        let origin = screen_origin();
         match (window.outer_position(), window.outer_size()) {
             (Ok(position), Ok(size)) => Rect {
-                x: position.x,
-                y: position.y,
+                x: position.x - origin.0,
+                y: position.y - origin.1,
                 width: size.width as i32,
                 height: size.height as i32,
             }
@@ -442,7 +443,11 @@ fn show_popup(
         return;
     };
     let _ = window.set_size(PhysicalSize::new(popup.width as u32, popup.height as u32));
-    let _ = window.set_position(PhysicalPosition::new(popup.x, popup.y));
+    let origin = screen_origin();
+    let _ = window.set_position(PhysicalPosition::new(
+        popup.x + origin.0,
+        popup.y + origin.1,
+    ));
     let _ = app.emit_to(POPUP_LABEL, RESULT_EVENT, result);
     if let Some(memory) = app.try_state::<HoverMemory>() {
         memory.set_with_origin(result.clone(), screenshot, identity.clone());

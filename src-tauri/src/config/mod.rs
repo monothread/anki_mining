@@ -347,7 +347,7 @@ mod tests {
 
         assert_eq!(config.anki_connect_url, "http://127.0.0.1:8765");
         assert_eq!(config.websocket_port, 6677);
-        assert_eq!(config.mpv_socket, "/tmp/mpvsocket");
+        assert_eq!(config.mpv_socket, crate::sources::mpv::DEFAULT_SOCKET);
         assert_eq!(config.mining_hotkey, "Alt+M");
         assert_eq!(config.hover_mode, TriggerMode::Hold);
         assert_eq!(config.hover_key, TriggerKey::Shift);
@@ -373,7 +373,10 @@ mod tests {
 
         assert_eq!(value["ankiConnectUrl"], json!("http://127.0.0.1:8765"));
         assert_eq!(value["websocketPort"], json!(6677));
-        assert_eq!(value["mpvSocket"], json!("/tmp/mpvsocket"));
+        assert_eq!(
+            value["mpvSocket"],
+            json!(crate::sources::mpv::DEFAULT_SOCKET)
+        );
         assert_eq!(value["miningHotkey"], json!("Alt+M"));
         assert_eq!(value["hoverMode"], json!("hold"));
         assert_eq!(value["hoverKey"], json!("shift"));

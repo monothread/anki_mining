@@ -4,6 +4,7 @@
 //! `mpv.conf`). The text is exact, with no OCR, and arrives when the subtitle changes.
 
 use std::io::{ErrorKind, Read, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,12 +15,21 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+#[cfg(windows)]
+use super::pipe::TimedReader;
 use super::worker::{is_stopped, Worker};
 use crate::types::text_source::{SourceError, TextSource, TextSourceEvent, WindowInfo};
 
 pub const SOURCE_ID: &str = "mpv";
 pub const APP_NAME: &str = "mpv";
+/// Where mpv listens by default (`input-ipc-server=` in `mpv.conf`): a Unix socket, or on Windows
+/// a named pipe.
+#[cfg(unix)]
 pub const DEFAULT_SOCKET: &str = "/tmp/mpvsocket";
+/// Where mpv listens by default (`input-ipc-server=` in `mpv.conf`): a Unix socket, or on Windows
+/// a named pipe.
+#[cfg(windows)]
+pub const DEFAULT_SOCKET: &str = r"\\.\pipe\mpvsocket";
 /// How often a connection to mpv is retried while mpv is not running.
 pub const RECONNECT_INTERVAL: Duration = Duration::from_millis(1_000);
 
@@ -136,7 +146,7 @@ impl TextSource for MpvSource {
 
         let worker = Worker::spawn("mpv-source", move |stop| {
             while !is_stopped(&stop) {
-                if let Ok(stream) = UnixStream::connect(&socket) {
+                if let Ok(stream) = connect(&socket) {
                     connection.set(true);
                     let keep_going = follow(stream, &sink, &stop, &clock);
                     connection.set(false);
@@ -179,16 +189,11 @@ fn sleep_unless_stopped(duration: Duration, stop: &AtomicBool) {
 /// Talks to one mpv connection until it closes or the source is stopped. Returns false when
 /// nobody is listening for the text any more, so the caller can stop for good.
 fn follow(
-    mut stream: UnixStream,
+    mut stream: impl Read,
     sink: &Sender<TextSourceEvent>,
     stop: &AtomicBool,
     clock: &SubtitleClock,
 ) -> bool {
-    if stream.set_read_timeout(Some(READ_TIMEOUT)).is_err() || send_observers(&mut stream).is_err()
-    {
-        return true;
-    }
-
     let mut title: Option<String> = None;
     let mut pending: Vec<u8> = Vec::new();
     let mut chunk = [0_u8; 4096];
@@ -214,7 +219,31 @@ fn follow(
     true
 }
 
-fn send_observers(stream: &mut UnixStream) -> std::io::Result<()> {
+/// Connects to mpv and asks it to report the subtitle and the title; what mpv sends can then be
+/// read with a timeout.
+#[cfg(unix)]
+fn connect(socket: &Path) -> std::io::Result<UnixStream> {
+    let mut stream = UnixStream::connect(socket)?;
+    stream.set_read_timeout(Some(READ_TIMEOUT))?;
+    send_observers(&mut stream)?;
+    Ok(stream)
+}
+
+/// Connects to mpv's named pipe and asks it to report the subtitle and the title; what mpv sends
+/// can then be read with a timeout.
+#[cfg(windows)]
+fn connect(socket: &Path) -> std::io::Result<TimedReader> {
+    let mut pipe = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(super::pipe::pipe_path(socket))?;
+    // Everything is written before the first read starts: Windows runs the reads and writes of
+    // one pipe handle one at a time, so a read that waits would hold the write back.
+    send_observers(&mut pipe)?;
+    Ok(TimedReader::spawn(pipe, READ_TIMEOUT))
+}
+
+fn send_observers(stream: &mut impl Write) -> std::io::Result<()> {
     for (id, property) in [
         (SUBTITLE_OBSERVER_ID, SUBTITLE_PROPERTY),
         (TITLE_OBSERVER_ID, TITLE_PROPERTY),
@@ -288,7 +317,7 @@ fn subtitle_event(text: String, title: Option<&str>) -> TextSourceEvent {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::io::{BufRead, BufReader};
     use std::os::unix::net::UnixListener;

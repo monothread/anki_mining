@@ -1,6 +1,9 @@
 pub mod clipboard;
 pub mod mpv;
 pub mod ocr;
+// Used by the Windows mpv connection; the code is plain Rust and is tested everywhere.
+#[cfg_attr(unix, allow(dead_code))]
+mod pipe;
 pub mod websocket;
 mod worker;
 

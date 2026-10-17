@@ -18,7 +18,7 @@ use tauri::{
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 use crate::audio::{AudioBuffer, AudioRecorder, BUFFER_SECONDS};
-use crate::capture::{Region, X11Capture};
+use crate::capture::{screen_origin, Region, SystemCapture};
 use crate::cards::CardInput;
 use crate::config::{Config, ConfigFile, MiningSettings};
 use crate::dictionary::{install_bundled, Dictionary, ImportStats, MetadataStats, ScanResult};
@@ -315,12 +315,28 @@ fn set_ocr_region(
     state: State<'_, AppState>,
     region: Option<Region>,
 ) -> Result<(), String> {
+    // The selector covers the main monitor; its region is measured from that monitor's corner.
+    let region = region.map(|region| in_screen_coordinates(&app, region));
     let applied = state
         .set_ocr_region(region)
         .map_err(|error| error.to_string())?;
     close_selector(&app);
     let _ = app.emit(OCR_REGION_EVENT, applied);
     Ok(())
+}
+
+/// A region measured from the corner of the main monitor, measured from the corner of the whole
+/// screen instead (they differ when another monitor lies left of or above the main one).
+fn in_screen_coordinates(app: &AppHandle, region: Region) -> Region {
+    let origin = screen_origin();
+    let Ok(Some(monitor)) = app.primary_monitor() else {
+        return region;
+    };
+    Region {
+        x: region.x + monitor.position().x - origin.0,
+        y: region.y + monitor.position().y - origin.1,
+        ..region
+    }
 }
 
 #[tauri::command]
@@ -670,7 +686,7 @@ fn start_ocr(
     let directory = find_ocr_directory(app)?;
     let mut source = OcrSource::new(
         || {
-            X11Capture::connect()
+            SystemCapture::connect()
                 .map(|capture| Box::new(capture) as Box<dyn crate::capture::ScreenCapture>)
                 .map_err(|error| error.to_string())
         },
