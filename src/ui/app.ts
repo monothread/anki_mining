@@ -54,6 +54,11 @@ const TEMPLATE = `
         <button type="button" id="select-area" class="action">Read screen area</button>
         <button type="button" id="stop-area" class="action" hidden>Stop reading</button>
     </span>
+    <span class="window-controls">
+        <button type="button" id="window-minimize" class="window-button" title="Minimize" aria-label="Minimize">&#8211;</button>
+        <button type="button" id="window-maximize" class="window-button" title="Maximize" aria-label="Maximize">&#9633;</button>
+        <button type="button" id="window-close" class="window-button close" title="Close" aria-label="Close">&#10005;</button>
+    </span>
 </header>
 <section id="setup" class="setup" hidden>
     <p>The dictionary is empty. Enter the path of a <code>jmdict-eng-*.json</code> file (jmdict-simplified):</p>
@@ -94,6 +99,9 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
     const lookupElement = requireElement(root, '#lookup', HTMLElement);
     const messageElement = requireElement(root, '#message', HTMLElement);
     const hoverModeButton = requireElement(root, '#hover-mode', HTMLButtonElement);
+    const minimizeButton = requireElement(root, '#window-minimize', HTMLButtonElement);
+    const maximizeButton = requireElement(root, '#window-maximize', HTMLButtonElement);
+    const closeButton = requireElement(root, '#window-close', HTMLButtonElement);
     const settingsButton = requireElement(root, '#open-settings', HTMLButtonElement);
     const settingsElement = requireElement(root, '#settings', HTMLElement);
     const hoverToggleButton = requireElement(root, '#hover-toggle', HTMLButtonElement);
@@ -195,6 +203,21 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
         }
         await mineEntry(selection, selection.results[0], first);
     };
+
+    const windowCommand = (command: () => Promise<void>): void => {
+        void command().catch((error: unknown) => {
+            showMessage(String(error), 'error');
+        });
+    };
+    minimizeButton.addEventListener('click', () => {
+        windowCommand(backend.minimizeWindow);
+    });
+    maximizeButton.addEventListener('click', () => {
+        windowCommand(backend.toggleMaximizeWindow);
+    });
+    closeButton.addEventListener('click', () => {
+        windowCommand(backend.closeWindow);
+    });
 
     const closeSettings = (): void => {
         settingsElement.hidden = true;

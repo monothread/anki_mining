@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { CardInput } from '../types/card';
 import type { HoverStatus, TriggerMode } from '../types/hover';
 import type { MineResult } from '../types/mine';
@@ -14,6 +15,10 @@ export type Unsubscribe = () => void;
 
 /** Everything the UI needs from the Rust side; replaced by a fake in tests. */
 export interface Backend {
+    minimizeWindow: () => Promise<void>;
+    toggleMaximizeWindow: () => Promise<void>;
+    /** Closes the window, which closes the whole app. */
+    closeWindow: () => Promise<void>;
     getStatus: () => Promise<Status>;
     getHover: () => Promise<HoverStatus>;
     setHoverMode: (mode: TriggerMode) => Promise<HoverStatus>;
@@ -40,6 +45,15 @@ export interface Backend {
 }
 
 export const tauriBackend: Backend = {
+    minimizeWindow: async () => {
+        await getCurrentWindow().minimize();
+    },
+    toggleMaximizeWindow: async () => {
+        await getCurrentWindow().toggleMaximize();
+    },
+    closeWindow: async () => {
+        await getCurrentWindow().close();
+    },
     getStatus: async () => {
         return invoke<Status>('get_status');
     },

@@ -774,3 +774,28 @@ describe('createApp settings', () => {
         expect(root.querySelector<HTMLElement>('#settings')?.hidden).toBe(true);
     });
 });
+
+describe('createApp window controls', () => {
+    it.each([
+        ['#window-minimize', 'minimizeWindow'],
+        ['#window-maximize', 'toggleMaximizeWindow'],
+        ['#window-close', 'closeWindow'],
+    ] as const)('%s calls %s once', async (selector, command) => {
+        const { root, fake } = await mount();
+
+        root.querySelector<HTMLButtonElement>(selector)?.click();
+
+        expect(fake.backend[command]).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows the reason when a window command fails', async () => {
+        const { root } = await mount((created) => {
+            vi.mocked(created.backend.closeWindow).mockRejectedValue('cannot close');
+        });
+
+        root.querySelector<HTMLButtonElement>('#window-close')?.click();
+        await vi.waitFor(() => {
+            expect(text(root, '#message')).toBe('cannot close');
+        });
+    });
+});

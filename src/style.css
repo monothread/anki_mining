@@ -234,3 +234,28 @@ input {
     gap: 8px;
     justify-content: flex-end;
 }
+
+.window-controls {
+    display: flex;
+    gap: 2px;
+}
+
+.window-button {
+    width: 28px;
+    height: 22px;
+    padding: 0;
+    color: var(--muted);
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.window-button:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.window-button.close:hover {
+    background: #c0392b;
+}

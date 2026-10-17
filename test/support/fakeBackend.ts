@@ -53,6 +53,9 @@ export function createFakeBackend(): FakeBackend {
     };
 
     const backend: Backend = {
+        minimizeWindow: vi.fn<Backend['minimizeWindow']>().mockResolvedValue(undefined),
+        toggleMaximizeWindow: vi.fn<Backend['toggleMaximizeWindow']>().mockResolvedValue(undefined),
+        closeWindow: vi.fn<Backend['closeWindow']>().mockResolvedValue(undefined),
         getStatus: vi.fn<Backend['getStatus']>().mockResolvedValue(STATUS),
         getHover: vi.fn<Backend['getHover']>().mockResolvedValue(HOVER),
         setHoverMode: vi.fn<Backend['setHoverMode']>().mockImplementation((mode) => {
