@@ -158,6 +158,16 @@ pub enum DuplicatePolicy {
     Allow,
 }
 
+/// Whether `socket` can be where mpv listens: an absolute path to a socket on Linux; on Windows
+/// the name of a named pipe (`mpvsocket`) or the path of one (`\\.\pipe\mpvsocket`).
+pub fn is_valid_mpv_socket(socket: &str, windows: bool) -> bool {
+    if !windows {
+        return Path::new(socket).is_absolute();
+    }
+    let bare_name = !socket.contains('/') && !socket.contains('\\');
+    bare_name || socket.starts_with(r"\\.\pipe\")
+}
+
 pub fn default_profile() -> Profile {
     Profile {
         id: DEFAULT_PROFILE_ID.to_string(),
@@ -263,9 +273,14 @@ impl Config {
         if self.websocket_port == 0 {
             problems.push("websocketPort must be between 1 and 65535".to_string());
         }
-        if !self.mpv_socket.is_empty() && !Path::new(&self.mpv_socket).is_absolute() {
+        if !self.mpv_socket.is_empty() && !is_valid_mpv_socket(&self.mpv_socket, cfg!(windows)) {
             problems.push(format!(
-                "mpvSocket must be an absolute path or empty (got `{}`)",
+                "mpvSocket must be {} or empty (got `{}`)",
+                if cfg!(windows) {
+                    "the name of a pipe (such as mpvsocket) or a pipe path (\\\\.\\pipe\\name)"
+                } else {
+                    "an absolute path"
+                },
                 self.mpv_socket
             ));
         }
@@ -339,6 +354,13 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    /// A valid mpv socket other than the default, on this system.
+    #[cfg(unix)]
+    const OTHER_SOCKET: &str = "/run/user/1000/mpv.sock";
+    /// A valid mpv socket other than the default, on this system.
+    #[cfg(windows)]
+    const OTHER_SOCKET: &str = r"\\.\pipe\other";
 
     fn invalid_messages(config: &Config) -> Vec<String> {
         match config.validate() {
@@ -751,7 +773,7 @@ mod tests {
     #[test]
     fn the_mpv_socket_can_be_changed_or_turned_off() {
         let custom = Config {
-            mpv_socket: "/run/user/1000/mpv.sock".to_string(),
+            mpv_socket: OTHER_SOCKET.to_string(),
             ..Config::default()
         };
         let off = Config {
@@ -764,25 +786,49 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_a_relative_mpv_socket_path() {
+    fn validate_rejects_a_mpv_socket_that_is_not_valid_on_this_system() {
+        let wrong = if cfg!(windows) {
+            r"some\folder"
+        } else {
+            "mpvsocket"
+        };
         let config = Config {
-            mpv_socket: "mpvsocket".to_string(),
+            mpv_socket: wrong.to_string(),
             ..Config::default()
         };
 
-        assert_eq!(
-            invalid_messages(&config),
-            vec!["mpvSocket must be an absolute path or empty (got `mpvsocket`)"]
+        let messages = invalid_messages(&config);
+
+        assert_eq!(messages.len(), 1);
+        assert!(
+            messages[0].starts_with("mpvSocket must be "),
+            "{messages:?}"
         );
+        assert!(
+            messages[0].ends_with(&format!("or empty (got `{wrong}`)")),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn a_mpv_socket_is_an_absolute_path_on_linux_and_a_pipe_on_windows() {
+        assert!(is_valid_mpv_socket("/tmp/mpvsocket", false));
+        assert!(!is_valid_mpv_socket("mpvsocket", false));
+        assert!(!is_valid_mpv_socket("relative/path", false));
+
+        assert!(is_valid_mpv_socket("mpvsocket", true));
+        assert!(is_valid_mpv_socket(r"\\.\pipe\mpvsocket", true));
+        assert!(!is_valid_mpv_socket(r"some\folder", true));
+        assert!(!is_valid_mpv_socket("C:/x/sock", true));
     }
 
     #[test]
     fn the_mpv_socket_is_read_from_the_file() {
         let directory = tempdir().expect("temp dir");
         let path = directory.path().join("config.json");
-        fs::write(&path, r#"{ "mpvSocket": "/tmp/other" }"#).expect("write");
+        fs::write(&path, json!({ "mpvSocket": OTHER_SOCKET }).to_string()).expect("write");
 
-        assert_eq!(Config::load(&path).expect("load").mpv_socket, "/tmp/other");
+        assert_eq!(Config::load(&path).expect("load").mpv_socket, OTHER_SOCKET);
     }
 
     #[test]

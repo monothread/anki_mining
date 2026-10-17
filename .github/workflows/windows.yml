@@ -61,6 +61,7 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Installer
+        if: ${{ !cancelled() }}
         run: |
           if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
             npx tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":true}}'
@@ -70,6 +71,7 @@ jobs:
           ls -la src-tauri/target/release/bundle/nsis
 
       - name: Install the app
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
@@ -77,6 +79,7 @@ jobs:
           Get-ChildItem C:\AnkiMining -Recurse -Depth 1 | Select-Object -First 60 FullName, Length
 
       - name: Self-test of the installed app
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $run = Start-Process -FilePath C:\AnkiMining\anki-mining.exe -ArgumentList '--self-test', 'C:\AnkiMining', "$PWD\self-test.txt" -Wait -PassThru
@@ -84,6 +87,7 @@ jobs:
           if ($run.ExitCode -ne 0) { throw "the self-test failed (exit code $($run.ExitCode))" }
 
       - name: The app opens
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $app = Start-Process -FilePath C:\AnkiMining\anki-mining.exe -PassThru
@@ -94,6 +98,7 @@ jobs:
           Stop-Process -Id $app.Id -Force
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: windows-installer
           if-no-files-found: error

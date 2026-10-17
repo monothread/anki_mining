@@ -1938,7 +1938,13 @@ mod tests {
             error,
             AppError::Anki(AnkiError::Connection { .. })
         ));
-        assert!(started.elapsed() < std::time::Duration::from_millis(150));
+        // No retries (each would add 200 ms); Windows takes a while to refuse a connection.
+        let limit = if cfg!(windows) {
+            std::time::Duration::from_secs(4)
+        } else {
+            std::time::Duration::from_millis(150)
+        };
+        assert!(started.elapsed() < limit, "{:?}", started.elapsed());
     }
 
     #[test]

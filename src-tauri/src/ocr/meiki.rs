@@ -600,9 +600,8 @@ mod tests {
         };
 
         assert!(matches!(error, OcrError::Model { .. }));
-        assert!(error
-            .to_string()
-            .contains("/definitely/missing/meiki.text.detect.v0.1.960x544.onnx"));
+        let expected = Path::new("/definitely/missing").join(DETECTION_MODEL);
+        assert!(error.to_string().contains(&expected.display().to_string()));
     }
 
     #[test]
