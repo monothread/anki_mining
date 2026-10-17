@@ -188,6 +188,11 @@ fn mine_remembered(
 }
 
 #[tauri::command]
+fn speak_text(state: State<'_, AppState>, text: String) -> Result<(), String> {
+    state.speak_aloud(&text)
+}
+
+#[tauri::command]
 fn mine_hover(
     state: State<'_, AppState>,
     memory: State<'_, HoverMemory>,
@@ -348,6 +353,7 @@ pub fn run() -> tauri::Result<()> {
             submit_text,
             get_hover,
             mine_hover,
+            speak_text,
             set_hover_mode,
             set_hover_enabled,
             get_settings,
@@ -570,9 +576,6 @@ fn start_speaker(
     config: &Config,
     warnings: &mut Vec<String>,
 ) -> Option<Arc<dyn Speaker>> {
-    if !config.tts_on_cards {
-        return None;
-    }
     let directory = match std::env::var_os(TTS_DIR_VARIABLE) {
         Some(directory) => PathBuf::from(directory),
         None => match app.path().resource_dir() {

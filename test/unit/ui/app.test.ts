@@ -857,4 +857,23 @@ describe('createApp window controls', () => {
             expect(text(root, '#message')).toBe('cannot read `/x.zip`: not found');
         });
     });
+
+    it('reads the clicked entry aloud in the main window and shows why it failed', async () => {
+        const { root, fake } = await mount();
+        fake.emitSentence(SENTENCE);
+        hover(root, '猫');
+        await vi.waitFor(() => {
+            expect(root.querySelector('.speak')).not.toBeNull();
+        });
+
+        root.querySelector<HTMLButtonElement>('.speak')?.click();
+        expect(fake.backend.speak).toHaveBeenCalledWith('ねこ');
+
+        vi.mocked(fake.backend.speak).mockRejectedValue('no program to play sound was found');
+        root.querySelector<HTMLButtonElement>('.speak')?.click();
+        await vi.waitFor(() => {
+            expect(text(root, '#message')).toBe('no program to play sound was found');
+        });
+    });
 });
+

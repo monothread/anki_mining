@@ -127,3 +127,18 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 4px;
 }
+
+.speak {
+    margin-left: 6px;
+    padding: 0 6px;
+    font-size: 12px;
+    color: var(--text, #f2f2f5);
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.speak:hover {
+    background: rgba(255, 255, 255, 0.12);
+}

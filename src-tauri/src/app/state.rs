@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
@@ -23,7 +24,7 @@ use crate::sources::mpv::SubtitleClock;
 use crate::sources::now_millis;
 use crate::sources::ocr::RegionHandle;
 use crate::text_offsets::utf16_offset_to_byte;
-use crate::tts::{speech_file, Speaker, TtsError};
+use crate::tts::{play_wav, speech_file, Speaker, TtsError};
 
 /// Smaller areas cannot hold a readable line of text.
 pub const MIN_REGION_WIDTH: u32 = 32;
@@ -77,6 +78,12 @@ pub struct Startup {
     pub ocr_unavailable: Option<String>,
 }
 
+/// Plays the WAV it is given (see [`AppState::with_player`]).
+pub type SoundPlayer = Arc<dyn Fn(&[u8]) -> Result<(), TtsError> + Send + Sync>;
+
+/// How many spoken words the listen buttons remember.
+const MAX_HEARD: usize = 64;
+
 pub struct AppState {
     config: Arc<ConfigFile>,
     dictionary: Mutex<Dictionary>,
@@ -88,6 +95,9 @@ pub struct AppState {
     subtitles: Option<SubtitleClock>,
     speaker: Option<Arc<dyn Speaker>>,
     fields_ready: AtomicBool,
+    /// Words already spoken for the listen buttons, so a second click is instant.
+    heard: Mutex<HashMap<String, Arc<Vec<u8>>>>,
+    player: SoundPlayer,
 }
 
 /// The speech as a card file; a failed synthesis is reported on stderr and gives no file.
@@ -134,6 +144,8 @@ impl AppState {
             subtitles: None,
             speaker: None,
             fields_ready: AtomicBool::new(false),
+            heard: Mutex::new(HashMap::new()),
+            player: Arc::new(play_wav),
         }
     }
 
@@ -165,6 +177,45 @@ impl AppState {
     pub fn with_speaker(mut self, speaker: Arc<dyn Speaker>) -> AppState {
         self.speaker = Some(speaker);
         self
+    }
+
+    /// Replaces the way sound is played (the default uses the system's players).
+    pub fn with_player(mut self, player: SoundPlayer) -> AppState {
+        self.player = player;
+        self
+    }
+
+    /// Reads `text` aloud (the listen buttons of the popup). The sound of a text that was read
+    /// before is kept, so listening again does not wait for the voice.
+    pub fn speak_aloud(&self, text: &str) -> Result<(), String> {
+        let speaker = self
+            .speaker
+            .as_ref()
+            .ok_or_else(|| "The voice is not available (see the warning at the top)".to_string())?;
+        let wav = {
+            let cached = self
+                .heard
+                .lock()
+                .map_err(|_| AppError::Poisoned.to_string())?
+                .get(text)
+                .cloned();
+            match cached {
+                Some(wav) => wav,
+                None => {
+                    let wav = Arc::new(speaker.speak(text).map_err(|error| error.to_string())?);
+                    let mut heard = self
+                        .heard
+                        .lock()
+                        .map_err(|_| AppError::Poisoned.to_string())?;
+                    if heard.len() >= MAX_HEARD {
+                        heard.clear();
+                    }
+                    heard.insert(text.to_string(), Arc::clone(&wav));
+                    wav
+                }
+            }
+        };
+        (self.player)(&wav).map_err(|error| error.to_string())
     }
 
     /// The card with the word and the sentence spoken by the synthesized voice: the word always,
@@ -1711,5 +1762,103 @@ mod tests {
         assert_eq!(data(4, "WordAudio"), "RIFFたいけん".as_bytes());
         assert_eq!(data(3, "SentenceAudio"), "RIFF猫が好き".as_bytes());
         assert_eq!(data(4, "SentenceAudio"), "RIFF体験してみた".as_bytes());
+    }
+
+    fn recording_player() -> (SoundPlayer, Arc<Mutex<Vec<Vec<u8>>>>) {
+        let played = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&played);
+        let player: SoundPlayer = Arc::new(move |wav: &[u8]| {
+            sink.lock().expect("played").push(wav.to_vec());
+            Ok(())
+        });
+        (player, played)
+    }
+
+    #[test]
+    fn listening_plays_the_voice_reading_the_text() {
+        let speaker = FakeSpeaker::new(None);
+        let (player, played) = recording_player();
+        let state = state_with(Config::default())
+            .with_speaker(speaker.clone())
+            .with_player(player);
+
+        state.speak_aloud("にほん").expect("played");
+
+        assert_eq!(speaker.said(), vec!["にほん".to_string()]);
+        assert_eq!(
+            *played.lock().expect("played"),
+            vec!["RIFFにほん".as_bytes().to_vec()]
+        );
+    }
+
+    #[test]
+    fn listening_again_to_the_same_text_does_not_ask_the_voice_again() {
+        let speaker = FakeSpeaker::new(None);
+        let (player, played) = recording_player();
+        let state = state_with(Config::default())
+            .with_speaker(speaker.clone())
+            .with_player(player);
+
+        state.speak_aloud("にほん").expect("first");
+        state.speak_aloud("にほん").expect("second");
+        state.speak_aloud("ひ").expect("other");
+
+        assert_eq!(speaker.said(), vec!["にほん".to_string(), "ひ".to_string()]);
+        assert_eq!(played.lock().expect("played").len(), 3);
+    }
+
+    #[test]
+    fn listening_works_even_when_the_voice_on_cards_is_off() {
+        let speaker = FakeSpeaker::new(None);
+        let (player, played) = recording_player();
+        let state = state_with(Config {
+            tts_on_cards: false,
+            ..Config::default()
+        })
+        .with_speaker(speaker)
+        .with_player(player);
+
+        state.speak_aloud("ねこ").expect("played");
+
+        assert_eq!(played.lock().expect("played").len(), 1);
+    }
+
+    #[test]
+    fn listening_without_a_voice_says_why() {
+        let state = state_with(Config::default());
+
+        let error = state.speak_aloud("ねこ").expect_err("must fail");
+
+        assert_eq!(
+            error,
+            "The voice is not available (see the warning at the top)"
+        );
+    }
+
+    #[test]
+    fn a_voice_that_fails_is_reported_and_nothing_is_played() {
+        let speaker = FakeSpeaker::new(Some("ねこ"));
+        let (player, played) = recording_player();
+        let state = state_with(Config::default())
+            .with_speaker(speaker)
+            .with_player(player);
+
+        let error = state.speak_aloud("ねこ").expect_err("must fail");
+
+        assert_eq!(error, TtsError::NoSound.to_string());
+        assert!(played.lock().expect("played").is_empty());
+    }
+
+    #[test]
+    fn a_player_that_fails_is_reported() {
+        let speaker = FakeSpeaker::new(None);
+        let player: SoundPlayer = Arc::new(|_: &[u8]| Err(TtsError::NoPlayer));
+        let state = state_with(Config::default())
+            .with_speaker(speaker)
+            .with_player(player);
+
+        let error = state.speak_aloud("ねこ").expect_err("must fail");
+
+        assert_eq!(error, TtsError::NoPlayer.to_string());
     }
 }

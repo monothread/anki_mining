@@ -24,7 +24,8 @@ refused. The popup tells you what happened.
 Every card gets a spoken example from a natural-sounding neural Japanese voice that runs offline inside the app
 ([VOICEVOX](https://voicevox.hiroshiba.jp), the voice 春日部つむぎ): the word goes to the `WordAudio` field and
 the sentence to `SentenceAudio` (when the sentence was heard in a video the real recording is kept there instead).
-It takes about 2 seconds per card. Turn it off in **Settings → Cards → Spoken word and sentence**. If your
+It takes about 2 seconds per card. Every entry in the popup (and in the main window) also has a **▶** button that reads the
+word aloud (about 2 seconds the first time, instant after that); it plays through `paplay`, `pw-play` or `aplay`. Turn it off in **Settings → Cards → Spoken word and sentence**. If your
 "AnkiMining" note type is from an older version, the app adds the `WordAudio` field to it; add `{{WordAudio}}` to
 its card template to hear it on the card. The voice's terms ask for the credit **VOICEVOX:春日部つむぎ** wherever
 you publish audio made with it.

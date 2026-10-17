@@ -4,6 +4,8 @@ import { pitchLabel, pitchPattern, splitMoras } from './pitch';
 export interface LookupViewHandlers {
     /** When absent, entries are shown without an "Add to Anki" button. */
     onMine?: (result: ScanResult, found: DeinflectedEntry) => void;
+    /** When absent, entries have no listen button. Called with the reading of the entry. */
+    onSpeak?: (reading: string) => void;
 }
 
 /** Joins inflections as a chain, innermost first: `past < polite`. */
@@ -41,6 +43,17 @@ function createEntryElement(
     const heading = createElement('div', 'entry-heading');
     heading.append(createElement('span', 'expression', found.entry.expression));
     heading.append(createReadingElement(found.entry.reading, found.entry.pitch));
+    const onSpeak = handlers.onSpeak;
+    if (onSpeak !== undefined) {
+        const listen = createElement('button', 'speak', '\u25B6');
+        listen.type = 'button';
+        listen.title = 'Listen';
+        listen.setAttribute('aria-label', `Listen to ${found.entry.expression}`);
+        listen.addEventListener('click', () => {
+            onSpeak(found.entry.reading);
+        });
+        heading.append(listen);
+    }
     if (found.entry.pitch.length > 0) {
         heading.append(createElement('span', 'pitch', pitchLabel(found.entry.pitch)));
     }

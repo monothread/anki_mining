@@ -1,10 +1,13 @@
 import type { HoverResult } from '../types/hover';
 import type { DeinflectedEntry, ScanResult } from '../types/scan';
+import type { LookupViewHandlers } from '../ui/lookupView';
 import { renderLookup } from '../ui/lookupView';
 
 export interface PopupHandlers {
     /** Called with the position of the chosen entry; without it entries have no "Add to Anki" button. */
     onMine?: (resultIndex: number, entryIndex: number) => void;
+    /** Called with the reading of an entry whose listen button was clicked. */
+    onSpeak?: (reading: string) => void;
 }
 
 /** Shows the sentence with the looked-up word marked, followed by the dictionary entries. */
@@ -29,17 +32,16 @@ export function renderHoverResult(
     const lookup = document.createElement('div');
     lookup.className = 'lookup';
     const onMine = handlers.onMine;
-    renderLookup(
-        lookup,
-        result.results,
-        onMine === undefined
-            ? {}
-            : {
-                  onMine: (matched, found) => {
-                      onMine(...positionOf(result.results, matched, found));
-                  },
-              },
-    );
+    const lookupHandlers: LookupViewHandlers = {};
+    if (onMine !== undefined) {
+        lookupHandlers.onMine = (matched, found) => {
+            onMine(...positionOf(result.results, matched, found));
+        };
+    }
+    if (handlers.onSpeak !== undefined) {
+        lookupHandlers.onSpeak = handlers.onSpeak;
+    }
+    renderLookup(lookup, result.results, lookupHandlers);
     root.append(sentence, lookup);
 }
 

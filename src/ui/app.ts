@@ -181,6 +181,11 @@ export async function createApp(root: HTMLElement, backend: Backend): Promise<Ap
             onMine: (result, found) => {
                 void mineEntry(current, result, found);
             },
+            onSpeak: (reading) => {
+                void backend.speak(reading).catch((error: unknown) => {
+                    showMessage(String(error), 'error');
+                });
+            },
         });
     };
 

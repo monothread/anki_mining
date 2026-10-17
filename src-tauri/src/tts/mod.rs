@@ -38,6 +38,8 @@ pub enum TtsError {
     NoSound,
     #[error("there is nothing to say")]
     EmptyText,
+    #[error("no program to play sound was found (paplay, pw-play or aplay)")]
+    NoPlayer,
 }
 
 /// Something that turns a text into speech (a WAV file).
@@ -144,6 +146,45 @@ impl VoicevoxSpeaker {
             Err(TtsError::NoSound)
         }
     }
+}
+
+/// Programs that can play a WAV file, in order of preference, with the arguments they need.
+const PLAYERS: [(&str, &[&str]); 3] = [("paplay", &[]), ("pw-play", &[]), ("aplay", &["-q"])];
+
+/// The first player found in the directories of `path` (a `PATH`-style list).
+pub fn find_player(path: &std::ffi::OsStr) -> Option<(PathBuf, &'static [&'static str])> {
+    let directories: Vec<PathBuf> = std::env::split_paths(path).collect();
+    PLAYERS.iter().find_map(|(name, arguments)| {
+        directories
+            .iter()
+            .map(|directory| directory.join(name))
+            .find(|candidate| candidate.is_file())
+            .map(|found| (found, *arguments))
+    })
+}
+
+/// Plays a WAV on the speakers without waiting for it to end.
+pub fn play_wav(wav: &[u8]) -> Result<(), TtsError> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let (player, arguments) = find_player(&path).ok_or(TtsError::NoPlayer)?;
+    let file = VoicevoxSpeaker::output_path();
+    std::fs::write(&file, wav).map_err(|error| TtsError::Spawn(error.to_string()))?;
+    let mut child = Command::new(player)
+        .args(arguments)
+        .arg(&file)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| {
+            let _ = std::fs::remove_file(&file);
+            TtsError::Spawn(error.to_string())
+        })?;
+    thread::spawn(move || {
+        let _ = child.wait();
+        let _ = std::fs::remove_file(&file);
+    });
+    Ok(())
 }
 
 /// The text without surrounding spaces, cut to [`MAX_CHARS`] characters.
@@ -325,5 +366,40 @@ mod tests {
     fn the_credit_names_the_voice() {
         assert_eq!(CREDIT, "VOICEVOX:春日部つむぎ");
         assert_eq!(DEFAULT_STYLE_ID, 8);
+    }
+
+    #[test]
+    fn the_first_player_found_is_chosen_in_order_of_preference() {
+        let first = tempfile::tempdir().expect("dir");
+        let second = tempfile::tempdir().expect("dir");
+        std::fs::write(first.path().join("aplay"), "").expect("aplay");
+        std::fs::write(second.path().join("pw-play"), "").expect("pw-play");
+        let path = std::env::join_paths([first.path(), second.path()]).expect("path");
+
+        let (found, arguments) = find_player(&path).expect("player");
+
+        assert_eq!(found, second.path().join("pw-play"));
+        assert!(arguments.is_empty());
+    }
+
+    #[test]
+    fn aplay_is_run_quietly() {
+        let directory = tempfile::tempdir().expect("dir");
+        std::fs::write(directory.path().join("aplay"), "").expect("aplay");
+        let path = std::env::join_paths([directory.path()]).expect("path");
+
+        let (found, arguments) = find_player(&path).expect("player");
+
+        assert_eq!(found, directory.path().join("aplay"));
+        assert_eq!(arguments, ["-q"]);
+    }
+
+    #[test]
+    fn no_player_is_none() {
+        let directory = tempfile::tempdir().expect("dir");
+        let path = std::env::join_paths([directory.path()]).expect("path");
+
+        assert!(find_player(&path).is_none());
+        assert!(find_player(std::ffi::OsStr::new("")).is_none());
     }
 }

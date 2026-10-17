@@ -26,6 +26,11 @@ export async function createPopup(root: HTMLElement, backend: PopupBackend): Pro
             message.textContent = '';
             delete message.dataset['kind'];
             renderHoverResult(body, result, {
+                onSpeak: (reading) => {
+                    void backend.speak(reading).catch((error: unknown) => {
+                        showMessage({ success: false, message: String(error) });
+                    });
+                },
                 onMine: (resultIndex, entryIndex) => {
                     void backend
                         .mine(resultIndex, entryIndex)

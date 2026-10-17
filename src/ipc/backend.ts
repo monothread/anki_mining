@@ -31,6 +31,8 @@ export interface Backend {
     importDictionary: (path: string) => Promise<ImportStats>;
     /** Adds the pitch accents and frequencies of a Yomitan dictionary zip. */
     importYomitan: (path: string) => Promise<MetadataStats>;
+    /** Reads a text aloud with the synthesized voice. */
+    speak: (text: string) => Promise<void>;
     submitText: (text: string) => Promise<void>;
     /** Opens the full-screen selector; the result arrives through `onOcrRegion`. */
     selectOcrRegion: () => Promise<void>;
@@ -85,6 +87,9 @@ export const tauriBackend: Backend = {
     },
     importYomitan: async (path) => {
         return invoke<MetadataStats>('import_yomitan', { path });
+    },
+    speak: async (text) => {
+        await invoke('speak_text', { text });
     },
     submitText: async (text) => {
         await invoke('submit_text', { text });

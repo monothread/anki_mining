@@ -8,6 +8,7 @@ import { HOVER_RESULT } from '../../support/fixtures';
 interface Mounted {
     root: HTMLElement;
     mine: ReturnType<typeof vi.fn<PopupBackend['mine']>>;
+    speak: ReturnType<typeof vi.fn<PopupBackend['speak']>>;
     emitHoverResult: (result: HoverResult) => void;
     emitMineResult: (result: MineResult) => void;
     unsubscribes: ReturnType<typeof vi.fn<() => void>>[];
@@ -27,8 +28,10 @@ async function mount(): Promise<Mounted> {
     const mine = vi
         .fn<PopupBackend['mine']>()
         .mockResolvedValue({ success: true, message: 'Added 友達 (note 1)' });
+    const speak = vi.fn<PopupBackend['speak']>().mockResolvedValue(undefined);
     const backend: PopupBackend = {
         mine,
+        speak,
         onHoverResult: (handler) => {
             hoverHandler = handler;
             return Promise.resolve(unsubscribes[0] ?? vi.fn<() => void>());
@@ -42,6 +45,7 @@ async function mount(): Promise<Mounted> {
     return {
         root,
         mine,
+        speak,
         emitHoverResult: (result) => {
             hoverHandler(result);
         },
@@ -142,4 +146,30 @@ describe('createPopup', () => {
         expect(unsubscribes[0]).toHaveBeenCalledTimes(1);
         expect(unsubscribes[1]).toHaveBeenCalledTimes(1);
     });
+
+    it('reads the entry aloud when its listen button is clicked', async () => {
+        const { root, speak, emitHoverResult } = await mount();
+        emitHoverResult(HOVER_RESULT);
+
+        const buttons = root.querySelectorAll<HTMLButtonElement>('.speak');
+        buttons[0]?.click();
+
+        expect(buttons.length).toBeGreaterThan(0);
+        expect(speak).toHaveBeenCalledTimes(1);
+        expect(speak).toHaveBeenCalledWith(HOVER_RESULT.results[0]?.entries[0]?.entry.reading);
+    });
+
+    it('shows why the voice could not be played', async () => {
+        const { root, speak, emitHoverResult } = await mount();
+        speak.mockRejectedValue('The voice is not available (see the warning at the top)');
+        emitHoverResult(HOVER_RESULT);
+
+        root.querySelector<HTMLButtonElement>('.speak')?.click();
+        await vi.waitFor(() => {
+            expect(message(root).textContent).toBe('The voice is not available (see the warning at the top)');
+        });
+
+        expect(message(root).dataset['kind']).toBe('error');
+    });
 });
+

@@ -190,3 +190,26 @@ describe('renderLookup pitch accent and frequency', () => {
     });
 });
 
+describe('renderLookup listen buttons', () => {
+    it('has no listen button unless a handler is given', () => {
+        const { container } = render([CAT_RESULT]);
+
+        expect(container.querySelector('.speak')).toBeNull();
+    });
+
+    it('has one listen button per entry that reads the reading of that entry', () => {
+        const container = document.createElement('div');
+        const onSpeak = vi.fn<(reading: string) => void>();
+        renderLookup(container, [CAT_RESULT, EAT_RESULT], { onSpeak });
+
+        const buttons = container.querySelectorAll<HTMLButtonElement>('.speak');
+        buttons[1]?.click();
+        buttons[0]?.click();
+
+        expect(buttons).toHaveLength(2);
+        expect(onSpeak.mock.calls).toEqual([['たべる'], ['ねこ']]);
+        expect(buttons[0]?.getAttribute('aria-label')).toBe('Listen to 猫');
+        expect(buttons[0]?.title).toBe('Listen');
+    });
+});
+
