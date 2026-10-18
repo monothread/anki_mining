@@ -6,7 +6,7 @@ meaning, and one click (or Alt+M) adds it to Anki with its sentence.
 
 <p align="center"><img src="src-tauri/app-icon.png" alt="App icon: a star being mined with a pickaxe" width="128"></p>
 
-**Status: first version (0.1.0), for Linux (X11) and Windows 10/11.** Hover lookup works on any text on
+**Status: first version (0.1.1), for Linux (X11) and Windows 10/11.** Hover lookup works on any text on
 screen (YouTube subtitles, TV banners, web pages, players, games). Cards get the sentence, a screenshot, the
 word and the sentence read aloud, pitch accent and frequency. Adding a word to Anki works against a mock
 AnkiConnect and has not been tried against a real Anki by the author. See [docs/PROGRESS.md](docs/PROGRESS.md).
@@ -95,8 +95,8 @@ signed; the app installs only files made with the key of this project.
 On Windows, run the installer. On Linux:
 
 ```bash
-chmod +x AnkiMining_0.1.0_amd64.AppImage
-./AnkiMining_0.1.0_amd64.AppImage
+chmod +x AnkiMining_0.1.1_amd64.AppImage
+./AnkiMining_0.1.1_amd64.AppImage
 ```
 
 To read the subtitles of mpv exactly, add `input-ipc-server=/tmp/mpvsocket` (Linux) or
@@ -119,7 +119,7 @@ scripts/dev.sh install        # npm ci
 scripts/dev.sh typecheck      # tsc
 scripts/dev.sh lint           # eslint + clippy
 scripts/dev.sh test           # Vitest + cargo test (under a virtual X11 display)
-scripts/dev.sh appimage       # build dist/AnkiMining_0.1.0_amd64.AppImage
+scripts/dev.sh appimage       # build dist/AnkiMining_0.1.1_amd64.AppImage
 ```
 
 The Windows version is also built in Docker (it is cross-compiled with `cargo-xwin`; the installer is made with NSIS):
