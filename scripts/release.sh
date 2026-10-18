@@ -40,7 +40,7 @@ mkdir -p "${WORK}"
 
 echo "== Linux AppImage"
 TAURI_SIGNING_PRIVATE_KEY="$(cat "${KEY_FILE}")" scripts/dev.sh appimage
-cp dist/AnkiMining_*_amd64.AppImage dist/AnkiMining_*_amd64.AppImage.sig "${WORK}/"
+cp "dist/AnkiMining_${VERSION}_amd64.AppImage" "dist/AnkiMining_${VERSION}_amd64.AppImage.sig" "${WORK}/"
 
 echo "== Windows installer (a successful run of the Windows workflow for this code)"
 # The installer must come from this code. A run of an earlier commit is accepted when what
@@ -61,7 +61,7 @@ fi
 echo "using the Windows run ${run_id}"
 rm -rf "${WORK}/windows"
 gh run download "${run_id}" --name windows-installer --dir "${WORK}/windows"
-cp "${WORK}"/windows/*-setup.exe "${WORK}"/windows/*-setup.exe.sig "${WORK}/"
+cp "${WORK}/windows/AnkiMining_${VERSION}_x64-setup.exe" "${WORK}/windows/AnkiMining_${VERSION}_x64-setup.exe.sig" "${WORK}/"
 
 echo "== latest.json"
 if [ -n "${NOTES_FILE}" ]; then
@@ -69,8 +69,8 @@ if [ -n "${NOTES_FILE}" ]; then
 else
     printf 'AnkiMining %s\n' "${VERSION}" > "${WORK}/notes.md"
 fi
-linux="$(ls "${WORK}"/AnkiMining_*_amd64.AppImage)"
-windows="$(ls "${WORK}"/AnkiMining_*-setup.exe)"
+linux="${WORK}/AnkiMining_${VERSION}_amd64.AppImage"
+windows="${WORK}/AnkiMining_${VERSION}_x64-setup.exe"
 python3 scripts/latest_json.py "${VERSION}" "${REPOSITORY}" "${WORK}/notes.md" "${linux}" "${windows}" > "${WORK}/latest.json"
 cat "${WORK}/latest.json"
 
