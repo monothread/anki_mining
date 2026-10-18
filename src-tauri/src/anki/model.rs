@@ -16,13 +16,13 @@ b { color: #d33; }
 
 const FRONT_TEMPLATE: &str = "\
 <div class=\"expression\">{{Expression}}</div>
-<div class=\"sentence\">{{Sentence}}</div>
-{{SentenceAudio}}";
+<div class=\"sentence\">{{Sentence}}</div>";
 
 const BACK_TEMPLATE: &str = "\
 {{FrontSide}}
 <hr id=\"answer\">
 <div class=\"reading\">{{Reading}}</div>
+{{SentenceAudio}}
 <div class=\"meaning\">{{Meaning}}</div>
 {{Picture}}
 <div class=\"meta\">{{Frequency}} {{Pitch}} {{Source}}</div>";
@@ -112,14 +112,16 @@ mod tests {
         assert_eq!(model.card_templates.len(), 1);
         let template = &model.card_templates[0];
         assert_eq!(template.name, "Recognition");
-        for field in ["Expression", "Sentence", "SentenceAudio"] {
+        for field in ["Expression", "Sentence"] {
             assert!(
                 template.front.contains(&format!("{{{{{field}}}}}")),
                 "front lacks {field}"
             );
         }
+        assert!(!template.front.contains("{{SentenceAudio}}"));
         for field in [
             "Reading",
+            "SentenceAudio",
             "Meaning",
             "Picture",
             "Frequency",
@@ -150,5 +152,19 @@ mod tests {
                 "Back": BACK_TEMPLATE
             }])
         );
+    }
+
+    #[test]
+    fn the_audio_is_on_the_back_below_the_reading_and_above_the_meaning() {
+        let back = &default_mining_model().card_templates[0].back;
+
+        let reading = back.find("{{Reading}}").expect("reading");
+        let audio = back.find("{{SentenceAudio}}").expect("audio");
+        let meaning = back.find("{{Meaning}}").expect("meaning");
+
+        assert!(reading < audio && audio < meaning, "{back}");
+        assert!(!default_mining_model().card_templates[0]
+            .front
+            .contains("Audio"));
     }
 }

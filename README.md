@@ -38,7 +38,11 @@ the sentence to `SentenceAudio` (when the sentence was heard in a video the real
 It takes about 2 seconds per card. Every entry in the popup (and in the main window) also has a **▶** button that reads the
 word aloud (about 2 seconds the first time, instant after that); it plays through `paplay`, `pw-play` or `aplay`. Turn it off in **Settings → Cards → Spoken word and sentence**. Both sounds go in the card's `SentenceAudio` field, the word first and then the whole sentence, so the card plays
 them in that order. The app never changes the structure (fields or templates) of your note types: Anki treats that
-as a schema change and asks for a full sync with AnkiWeb, which can conflict with your other devices. The voice's terms ask for the credit **VOICEVOX:春日部つむぎ** wherever
+as a schema change and asks for a full sync with AnkiWeb, which can conflict with your other devices.
+In the note type the app creates, the audio is on the **back** of the card, right below the reading and above the
+meaning. A note type you already have keeps its templates (changing them would also force a full sync): to get the
+same layout, open it in Anki (*Tools > Manage Note Types > Cards*), remove `{{SentenceAudio}}` from the front and
+add it to the back, after `{{Reading}}`. The voice's terms ask for the credit **VOICEVOX:春日部つむぎ** wherever
 you publish audio made with it.
 
 ## Decks per application (profiles)
