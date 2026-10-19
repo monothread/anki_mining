@@ -1277,6 +1277,7 @@ mod tests {
             .push(profile_for("player", "Anime", Some("mpv"), None));
         settings.audio_seconds = 4;
         settings.duplicate_policy = DuplicatePolicy::Allow;
+        settings.always_on_top = false;
         let saved = state.save_settings(settings.clone()).expect("saved");
 
         assert_eq!(saved, settings);

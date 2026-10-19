@@ -69,6 +69,8 @@ describe('renderSettings', () => {
         expect(field(root, 'closeToTray').checked).toBe(false);
         expect(field(root, 'ttsOnCards').checked).toBe(true);
         expect(field(root, 'autoUpdate').checked).toBe(true);
+        expect(field(root, 'alwaysOnTop').checked).toBe(true);
+        expect(root.querySelector('.application input[name="alwaysOnTop"]')).not.toBeNull();
         expect(root.querySelector('.general input[name="closeToTray"]')).toBeNull();
         expect(root.querySelector('.application input[name="closeToTray"]')).not.toBeNull();
         expect(root.querySelector<HTMLSelectElement>('select[name="duplicatePolicy"]')?.value).toBe('skip');
@@ -108,6 +110,7 @@ describe('renderSettings', () => {
         field(root, 'closeToTray').checked = true;
         field(root, 'ttsOnCards').checked = false;
         field(root, 'autoUpdate').checked = false;
+        field(root, 'alwaysOnTop').checked = false;
         const policy = root.querySelector<HTMLSelectElement>('select[name="duplicatePolicy"]');
         if (policy) {
             policy.value = 'allow';
@@ -136,6 +139,7 @@ describe('renderSettings', () => {
             closeToTray: true,
             ttsOnCards: false,
             autoUpdate: false,
+            alwaysOnTop: false,
         });
     });
 

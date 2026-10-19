@@ -170,6 +170,7 @@ export function readSettings(root: HTMLElement): MiningSettings {
         closeToTray: input(root, 'closeToTray').checked,
         ttsOnCards: input(root, 'ttsOnCards').checked,
         autoUpdate: input(root, 'autoUpdate').checked,
+        alwaysOnTop: input(root, 'alwaysOnTop').checked,
     };
 }
 
@@ -249,6 +250,7 @@ export function renderSettings(root: HTMLElement, settings: MiningSettings, hand
     application.append(
         element('legend', undefined, 'Application'),
         labelled('Keep running in the system tray when the window is closed', checkbox('closeToTray', settings.closeToTray)),
+        labelled('Keep the window above the other applications', checkbox('alwaysOnTop', settings.alwaysOnTop), 'Turn it off to let the system decide which window is on top'),
     );
     const updates = element('div', 'check-updates');
     const checkButton = element('button', 'action check-now', 'Check now');

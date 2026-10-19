@@ -139,7 +139,18 @@ fn save_settings(
 ) -> Result<MiningSettings, String> {
     let saved = state.save_settings(settings)?;
     tray::sync_tray_on_main_thread(&app, saved.close_to_tray);
+    apply_always_on_top(&app, saved.always_on_top);
     Ok(saved)
+}
+
+/// Keeps the main window above the other windows, or leaves the stacking to the system.
+fn apply_always_on_top(app: &AppHandle, always_on_top: bool) {
+    let Some(window) = app.get_webview_window(MAIN_LABEL) else {
+        return;
+    };
+    if let Err(error) = window.set_always_on_top(always_on_top) {
+        report_save_error(app, Err(error.to_string()));
+    }
 }
 
 #[tauri::command]
@@ -532,6 +543,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     }
     let close_to_tray = config.close_to_tray;
     let auto_update = config.auto_update;
+    let always_on_top = config.always_on_top;
     let speaker = start_speaker(app, &config, &mut warnings);
     let mut state = AppState::new(
         config,
@@ -552,6 +564,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(state);
     start_hover(app, &hover_control, &tokenizer);
     tray::sync_tray_on_main_thread(app, close_to_tray);
+    apply_always_on_top(app, always_on_top);
     if auto_update {
         updater::check_in_background(app);
     }

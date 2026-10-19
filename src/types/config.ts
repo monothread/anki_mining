@@ -29,6 +29,8 @@ export interface Config {
     ttsStyleId: number;
     /** Whether the app looks for a newer version a little after it starts. */
     autoUpdate: boolean;
+    /** Whether the main window stays above the other windows. */
+    alwaysOnTop: boolean;
     defaultProfileId: string;
     profiles: Profile[];
 }

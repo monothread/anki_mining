@@ -116,4 +116,5 @@ export const SETTINGS: MiningSettings = {
     closeToTray: false,
     ttsOnCards: true,
     autoUpdate: true,
+    alwaysOnTop: true,
 };

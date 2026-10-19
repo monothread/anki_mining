@@ -76,6 +76,8 @@ pub struct Config {
     pub tts_style_id: u32,
     /// Whether the app looks for a newer version on GitHub a little after it starts.
     pub auto_update: bool,
+    /// Whether the main window stays above the other windows (otherwise the system decides).
+    pub always_on_top: bool,
     pub default_profile_id: String,
     pub profiles: Vec<Profile>,
 }
@@ -99,6 +101,7 @@ impl Default for Config {
             tts_on_cards: true,
             tts_style_id: DEFAULT_STYLE_ID,
             auto_update: true,
+            always_on_top: true,
             default_profile_id: DEFAULT_PROFILE_ID.to_string(),
             profiles: vec![default_profile()],
         }
@@ -118,6 +121,7 @@ pub struct MiningSettings {
     pub close_to_tray: bool,
     pub tts_on_cards: bool,
     pub auto_update: bool,
+    pub always_on_top: bool,
 }
 
 impl MiningSettings {
@@ -132,6 +136,7 @@ impl MiningSettings {
             close_to_tray: config.close_to_tray,
             tts_on_cards: config.tts_on_cards,
             auto_update: config.auto_update,
+            always_on_top: config.always_on_top,
         }
     }
 
@@ -145,6 +150,7 @@ impl MiningSettings {
         config.close_to_tray = self.close_to_tray;
         config.tts_on_cards = self.tts_on_cards;
         config.auto_update = self.auto_update;
+        config.always_on_top = self.always_on_top;
     }
 }
 
@@ -390,6 +396,7 @@ mod tests {
         assert!(!config.close_to_tray);
         assert!(config.tts_on_cards);
         assert!(config.auto_update);
+        assert!(config.always_on_top);
         assert_eq!(config.tts_style_id, 8);
         assert_eq!(config.default_profile_id, "default");
         assert_eq!(config.profiles, vec![default_profile()]);
@@ -420,6 +427,7 @@ mod tests {
         assert_eq!(value["closeToTray"], json!(false));
         assert_eq!(value["ttsOnCards"], json!(true));
         assert_eq!(value["autoUpdate"], json!(true));
+        assert_eq!(value["alwaysOnTop"], json!(true));
         assert_eq!(value["ttsStyleId"], json!(8));
         assert_eq!(value["defaultProfileId"], json!("default"));
         assert_eq!(value["profiles"][0]["deckName"], json!("Mining"));
@@ -843,6 +851,7 @@ mod tests {
         settings.close_to_tray = true;
         settings.tts_on_cards = false;
         settings.auto_update = false;
+        settings.always_on_top = false;
 
         settings.clone().apply_to(&mut config);
 
@@ -855,7 +864,9 @@ mod tests {
         assert_eq!(value["closeToTray"], json!(true));
         assert_eq!(value["ttsOnCards"], json!(false));
         assert_eq!(value["autoUpdate"], json!(false));
+        assert_eq!(value["alwaysOnTop"], json!(false));
         assert!(!config.auto_update);
+        assert!(!config.always_on_top);
         assert!(!config.tts_on_cards);
         assert!(config.close_to_tray);
         assert_eq!(value["defaultProfileId"], json!("default"));
