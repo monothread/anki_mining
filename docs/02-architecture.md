@@ -75,7 +75,7 @@ Defined twice and kept in sync by hand: TypeScript in `src/types/` and Rust in `
 Each emits `{ text, sourceId, timestamp, windowInfo? }` into one channel. Implemented: `ClipboardSource`, `WebSocketSource` (loopback only, 64 KiB limit), `OcrSource` (selected region, reads only when the pixels change and the text is confirmed by two reads) and `MpvSource` (mpv JSON IPC socket: exact subtitle text, reconnects when mpv restarts). There is no browser extension (user decision).
 
 ## Default "AnkiMining" note type
-Fields: `Expression`, `Reading`, `Meaning`, `Sentence`, `SentenceAudio`, `Picture`, `Frequency`, `Pitch`, `Source`. Created through `createModel` if it does not exist; the field mapping is configurable per profile.
+Fields: `Expression`, `Reading`, `Meaning`, `Sentence`, `SentenceAudio`, `Picture`, `Frequency`, `Pitch`, `Source`. Created through `createModel` if it does not exist; the field mapping is configurable per profile. The back of the card shows the reading, the audio, the meaning (`.meaning`: at most 700 px wide, centered, text left-aligned), the picture and the extras.
 
 ## Security and privacy
 - Local servers listen on `127.0.0.1` only; the websocket accepts any local client (see PROGRESS).

@@ -2,8 +2,8 @@
 
 > Update this file at the end of EVERY session. It is the source of truth for the project state.
 
-**Last updated:** 2026-10-14
-**Version:** 0.1.0, first version published (hover lookup works on X11; Anki card creation deferred)
+**Last updated:** 2026-10-19
+**Version:** 0.1.1 published (0.1.0 was the first version) (hover lookup works on X11; Anki card creation deferred)
 **Current phase:** Phase 1 and Phase 3 done (hover lookup and a first Anki flow: add the word from the popup); Phase 2 (media) next
 **Next step:** Phase 6: pitch accent and frequency, Yomitan dictionary import, Wayland backends and packaging (Flatpak, release). Also pending: try the Anki flow against a real Anki; exact subtitle timing for audio clips (P4-03).
 
@@ -127,8 +127,12 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 | 2026-10-18 | **v0.1.1 published** (https://github.com/monothread/anki_mining/releases/tag/v0.1.1): the default card has the audio on the back (below the reading, above the meaning). Windows workflow green on that code (run 39085983862), `scripts/release.sh` fixed to use the exact version in file names. Checked: the published 0.1.0 AppImage found 0.1.1, downloaded it and replaced itself with a file whose hash equals the published 0.1.1 AppImage | — |
 | 2026-10-17 | Fix: cards conflicted with AnkiWeb. Cause: the app added a `WordAudio` field and edited the templates of the user's note type, a schema change that makes Anki force a full sync. The migration is deleted; the word and the sentence audio both go to `SentenceAudio` (word first). The default mapping, the default note type, `Config::load` (old `WordAudio` mapping of the app's note type becomes `SentenceAudio`) and the tests changed; regression test: mining sends only `modelNames` and `addNote`. 632 Rust tests | — |
 | 2026-10-17 | Fix: no loading was visible while adding. Cause: Tauri commands that are not `async` run on the main thread, so the whole UI (and the redraw of the button) stopped while the voice and Anki worked. `mine_hover`, `mine`, `speak_text`, `known_words`, `import_dictionary` and `import_yomitan` are now `async` and run in `spawn_blocking` (`off_main_thread`); the mining shortcut works on its own thread and sends `mine-started` first. The popup shows the spinner button and "Adding to Anki…" (click and shortcut). Checked in the real AppImage with a slow mock (`MOCK_ADD_DELAY`, `MINE_SNAPSHOT_AFTER` in `scripts/e2e-mine.sh`): the screen 1 s after the click showed "Adding…" with a spinner, then "Added ✓". 632 Rust + 189 Vitest tests | — |
+| 2026-10-19 | Default card CSS: the `.meaning` block has `max-width: 700px`, is centered (`margin: 12px auto`) and its text is left-aligned, so on ultrawide screens the explanation no longer stretches across the card. Only note types created from now on get it; an existing `AnkiMining` note type keeps its CSS (edit it in *Tools > Manage Note Types > Cards > Styling*) | — |
+| 2026-10-19 | Setting `alwaysOnTop` (Settings → Application, default on, ADR-020): the main window stays above the other applications, or, when off, the system decides the stacking. Applied on Save (`apply_always_on_top`) and at start. The popup and the region selector stay on top while they are shown. Tests: 656 Rust, 196 Vitest; tsc, eslint, clippy clean | — |
+| 2026-10-19 | Investigation (not fixed, waiting for the user's screenshot): a card for `カメラ` got a sentence like `カメラOhtios/wwwwoltheconWetcvRU6Bカメラ2htp://ww.youtub.com/watch?v…`. Probable cause: `block_around` (`ocr/layout.rs`) joins stacked lines of similar height by geometry only, so a link title and the URL under it on a web page become one sentence, and the OCR misreads the small URL. Proposed fix: only accept block lines with some Japanese (kana or kanji) | Decision pending |
 
 ## Backlog (ideas outside the current scope)
+- Keep non-Japanese lines (URLs, interface text) out of the sentence block (see the 2026-10-19 investigation).
 - Wayland backends (portal screen capture, pointer, popup placement) and a Flatpak manifest: need a machine that runs them (ADR-016).
 - Pitch accent for words missing from Kanjium; a larger and less conversational frequency source if one with a free license appears.
 - Japanese→Portuguese meanings: no free source of useful size was found (a 12% layer from the Portuguese Wiktionary was built and removed at the user's request).
