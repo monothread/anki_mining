@@ -8,7 +8,7 @@ const CSS: &str = "\
 .expression { font-size: 40px; margin-bottom: 12px; }
 .sentence { font-size: 24px; margin: 12px 0; }
 .reading { font-size: 22px; color: #777; }
-.meaning { margin: 12px 0; }
+.meaning { max-width: 700px; margin: 12px auto; text-align: left; }
 .meta { font-size: 14px; color: #999; }
 img { max-width: 100%; }
 b { color: #d33; }
@@ -152,6 +152,13 @@ mod tests {
                 "Back": BACK_TEMPLATE
             }])
         );
+    }
+
+    #[test]
+    fn the_meaning_is_a_left_aligned_block_centered_with_a_maximum_width() {
+        let css = default_mining_model().css;
+
+        assert!(css.contains(".meaning { max-width: 700px; margin: 12px auto; text-align: left; }"));
     }
 
     #[test]
