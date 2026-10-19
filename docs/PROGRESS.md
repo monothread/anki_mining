@@ -3,7 +3,7 @@
 > Update this file at the end of EVERY session. It is the source of truth for the project state.
 
 **Last updated:** 2026-10-19
-**Version:** 0.1.1 published (0.1.0 was the first version) (hover lookup works on X11; Anki card creation deferred)
+**Version:** 0.1.2 published (0.1.0 was the first version) (hover lookup works on X11; Anki card creation deferred)
 **Current phase:** Phase 1 and Phase 3 done (hover lookup and a first Anki flow: add the word from the popup); Phase 2 (media) next
 **Next step:** Phase 6: pitch accent and frequency, Yomitan dictionary import, Wayland backends and packaging (Flatpak, release). Also pending: try the Anki flow against a real Anki; exact subtitle timing for audio clips (P4-03).
 
@@ -130,6 +130,7 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 | 2026-10-19 | Default card CSS: the `.meaning` block has `max-width: 700px`, is centered (`margin: 12px auto`) and its text is left-aligned, so on ultrawide screens the explanation no longer stretches across the card. Only note types created from now on get it; an existing `AnkiMining` note type keeps its CSS (edit it in *Tools > Manage Note Types > Cards > Styling*) | — |
 | 2026-10-19 | Setting `alwaysOnTop` (Settings → Application, default on, ADR-020): the main window stays above the other applications, or, when off, the system decides the stacking. Applied on Save (`apply_always_on_top`) and at start. The popup and the region selector stay on top while they are shown. Tests: 656 Rust, 196 Vitest; tsc, eslint, clippy clean | — |
 | 2026-10-19 | Investigation (not fixed, waiting for the user's screenshot): a card for `カメラ` got a sentence like `カメラOhtios/wwwwoltheconWetcvRU6Bカメラ2htp://ww.youtub.com/watch?v…`. Probable cause: `block_around` (`ocr/layout.rs`) joins stacked lines of similar height by geometry only, so a link title and the URL under it on a web page become one sentence, and the OCR misreads the small URL. Proposed fix: only accept block lines with some Japanese (kana or kanji) | Decision pending |
+| 2026-10-19 | **v0.1.2 published** (https://github.com/monothread/anki_mining/releases/tag/v0.1.2): the `alwaysOnTop` setting and the narrower `.meaning` block of the default card. Windows workflow green on that code (run 39313589720), `scripts/release.sh 0.1.2 docs/releases/0.1.2.md`. The first upload of the Windows installer timed out (network), so the tag was already pushed and the release was created again by hand from `dist/release-0.1.2` with `gh release create` | — |
 
 ## Backlog (ideas outside the current scope)
 - Keep non-Japanese lines (URLs, interface text) out of the sentence block (see the 2026-10-19 investigation).
