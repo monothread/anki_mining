@@ -106,9 +106,15 @@ Downloads are on the [releases page](https://github.com/monothread/anki_mining/r
 - Vertical text is less accurate than horizontal text.
 - Content without subtitles on screen is not supported (there is nothing to point at).
 
+## License
+
+The source code is released under the [MIT License](LICENSE). The bundled models, dictionary data and other
+third-party components keep their own licenses (LGPL-3.0, CC BY-SA 4.0, CC BY 2.0 FR, the VOICEVOX terms and
+others); see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which is also shipped inside the application.
+
 ## Credits
 
 MeikiOCR (text recognition), ONNX Runtime, Lindera with UniDic (tokenizer), JMdict (CC BY-SA 4.0), Kanjium
-(pitch accent, CC BY-SA 4.0), Tatoeba (frequency ranks, CC BY 2.0 FR), Tauri, and the VOICEVOX voice
+(pitch accent, CC BY-SA 4.0, notation by Uros O.), Tatoeba (frequency ranks, CC BY 2.0 FR), Tauri, and the VOICEVOX voice
 **VOICEVOX:春日部つむぎ**, which must be credited wherever audio made with it is published. For development,
 architecture and decisions see [docs/](docs/PROGRESS.md).

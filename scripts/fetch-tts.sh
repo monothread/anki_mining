@@ -93,6 +93,7 @@ find "${TARGET}" -mindepth 1 -maxdepth 1 ! -name README.md -exec rm -rf {} +
 cp -r "${CORE}/dict/open_jtalk_dic_utf_8-1.11" "${TARGET}/"
 cp -r "${CORE}/models/vvms" "${TARGET}/"
 cp "${CORE}/models/TERMS.txt" "${TARGET}/VOICEVOX-TERMS.txt"
+cp "${CORE}/onnxruntime/TERMS.txt" "${TARGET}/VOICEVOX-ONNXRUNTIME-TERMS.txt"
 cp "${CORE}/c_api/LICENSE" "${TARGET}/VOICEVOX-CORE-LICENSE"
 
 if [ "${PLATFORM}" = "windows" ]; then

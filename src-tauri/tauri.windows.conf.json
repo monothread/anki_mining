@@ -7,6 +7,8 @@
             "resources/ocr/*.onnx": "ocr/",
             "resources/ocr/*.dll": "ocr/",
             "resources/dictionary/*.db": "dictionary/",
+            "../LICENSE": "licenses/LICENSE",
+            "../THIRD-PARTY-NOTICES.md": "licenses/THIRD-PARTY-NOTICES.md",
             "resources/tts-windows/": "tts/"
         }
     }

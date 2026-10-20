@@ -76,7 +76,7 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 392 Rust tests (8 need a display and run under xvfb via `scripts/dev.sh test`) and 112 Vitest tests; `tsc`, eslint (0 warnings), `cargo clippy -D warnings` and `cargo fmt` clean. OCR accuracy: 99.9% characters on 350 degraded synthetic subtitle bands (45 ms/image), 99.6% on 60-110 character lines. Real-screen checks: YouTube burned-in subtitle (clean), YouTube caption box over another subtitle (word right, sentence noisy), TV news banner (word right, one kanji misread).
 
 ## Blockers / open questions
-- None at the moment. No license has been chosen for the project's own code (needs a decision before others can reuse it).
+- None at the moment.
 
 ## Session log
 | Date | Summary | Tasks completed |
@@ -131,13 +131,14 @@ An original blue star being mined with a pickaxe (chips flying off). Source scri
 | 2026-10-19 | Setting `alwaysOnTop` (Settings → Application, default on, ADR-020): the main window stays above the other applications, or, when off, the system decides the stacking. Applied on Save (`apply_always_on_top`) and at start. The popup and the region selector stay on top while they are shown. Tests: 656 Rust, 196 Vitest; tsc, eslint, clippy clean | — |
 | 2026-10-19 | Investigation (not fixed, waiting for the user's screenshot): a card for `カメラ` got a sentence like `カメラOhtios/wwwwoltheconWetcvRU6Bカメラ2htp://ww.youtub.com/watch?v…`. Probable cause: `block_around` (`ocr/layout.rs`) joins stacked lines of similar height by geometry only, so a link title and the URL under it on a web page become one sentence, and the OCR misreads the small URL. Proposed fix: only accept block lines with some Japanese (kana or kanji) | Decision pending |
 | 2026-10-19 | **v0.1.2 published** (https://github.com/monothread/anki_mining/releases/tag/v0.1.2): the `alwaysOnTop` setting and the narrower `.meaning` block of the default card. Windows workflow green on that code (run 39313589720), `scripts/release.sh 0.1.2 docs/releases/0.1.2.md`. The first upload of the Windows installer timed out (network), so the tag was already pushed and the release was created again by hand from `dist/release-0.1.2` with `gh release create` | — |
+| 2026-10-19 | **License** (ADR-021): the project's code is MIT (`LICENSE`, `license` in `package.json` and `Cargo.toml`, README section). Licenses of everything bundled were checked against the upstream pages and listed in `THIRD-PARTY-NOTICES.md`, which is shipped in the bundle with `LICENSE` (`licenses/`); `scripts/fetch-tts.sh` now also copies the VOICEVOX ONNX Runtime terms. Open point: the origin of Kanjium's `accents.txt` is not stated by its author | — |
 
 ## Backlog (ideas outside the current scope)
 - Keep non-Japanese lines (URLs, interface text) out of the sentence block (see the 2026-10-19 investigation).
 - Wayland backends (portal screen capture, pointer, popup placement) and a Flatpak manifest: need a machine that runs them (ADR-016).
 - Pitch accent for words missing from Kanjium; a larger and less conversational frequency source if one with a free license appears.
 - Japanese→Portuguese meanings: no free source of useful size was found (a 12% layer from the Portuguese Wiktionary was built and removed at the user's request).
-- Try the Anki flow against a real Anki; choose a project license; publish the first release (push a `v*` tag).
+- Try the Anki flow against a real Anki; publish the first release (push a `v*` tag).
 - Visual signal when a word is identified. Decided to leave it as is (the popup is the signal). The cursor shape cannot be changed over other apps' windows on X11; if wanted later, the clean option is a click-through highlight frame over the word, the alternatives (pointer grab, an input-capturing window) block clicks.
 - Support for languages other than Japanese.
 - Card review inside the app.

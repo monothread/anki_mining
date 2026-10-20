@@ -2,6 +2,7 @@
 name = "anki-mining"
 version = "0.1.2"
 description = "Japanese sentence mining overlay that creates Anki cards"
+license = "MIT"
 edition = "2021"
 
 [lib]
